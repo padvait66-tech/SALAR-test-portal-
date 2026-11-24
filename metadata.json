@@ -1,0 +1,6 @@
+{
+  "name": "Gurukul Classes",
+  "description": "Comprehensive CBT test portal, examination management, question bank, attendance, study materials, and student-admin platform for Gurukul Classes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
