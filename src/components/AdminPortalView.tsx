@@ -199,7 +199,21 @@ export function AdminPortalView({
   onSwitchToStudent,
   onLogout,
 }: AdminPortalViewProps) {
-  const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => {
+    try {
+      const saved = window.sessionStorage.getItem('salar_admin_tab') as AdminTab | null;
+      return saved || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('salar_admin_tab', activeTab);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [activeTab]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Control Room sync & revenue state

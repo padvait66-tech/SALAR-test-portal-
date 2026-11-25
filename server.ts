@@ -61,6 +61,8 @@ interface AuthedRequest extends Request {
   session?: { role: UserRole; subjectId: string; email: string };
 }
 
+const SESSION_COOKIE_NAME = 'salar_session';
+
 function extractBearer(req: Request): string {
   const header = req.headers.authorization || '';
   if (header.startsWith('Bearer ')) {
@@ -69,8 +71,66 @@ function extractBearer(req: Request): string {
   return '';
 }
 
+function parseCookies(req: Request): Record<string, string> {
+  const raw = req.headers.cookie || '';
+  if (!raw) return {};
+  const result: Record<string, string> = {};
+  raw.split(';').forEach((part) => {
+    const idx = part.indexOf('=');
+    if (idx <= 0) return;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) {
+      try {
+        result[key] = decodeURIComponent(val);
+      } catch {
+        result[key] = val;
+      }
+    }
+  });
+  return result;
+}
+
+function extractAuthToken(req: Request): string {
+  return extractBearer(req) || parseCookies(req)[SESSION_COOKIE_NAME] || '';
+}
+
+function setSessionCookie(req: Request, res: Response, token: string): void {
+  const isHttps =
+    req.secure ||
+    String(req.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase() === 'https';
+  const attrs = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    `Max-Age=${60 * 60 * 24 * 7}`,
+    isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax',
+  ];
+  res.setHeader('Set-Cookie', attrs.join('; '));
+}
+
+function clearSessionCookie(req: Request, res: Response): void {
+  const isHttps =
+    req.secure ||
+    String(req.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase() === 'https';
+  const attrs = [
+    `${SESSION_COOKIE_NAME}=`,
+    'Path=/',
+    'HttpOnly',
+    'Max-Age=0',
+    isHttps ? 'SameSite=None; Secure' : 'SameSite=Lax',
+  ];
+  res.setHeader('Set-Cookie', attrs.join('; '));
+}
+
 function attachSession(req: AuthedRequest, _res: Response, next: NextFunction): void {
-  const token = extractBearer(req);
+  const token = extractAuthToken(req);
   if (token) {
     const sess = getSession(token);
     if (sess) req.session = sess;
@@ -141,8 +201,16 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// Active session introspection
+app.get('/api/auth/session', (req: AuthedRequest, res: Response) => {
+  res.json({
+    authenticated: Boolean(req.session),
+    session: req.session ?? null,
+  });
+});
+
 // Public bootstrap (safe public data only — uses COUNT(*) instead of loading all question blobs)
-app.get('/api/public/bootstrap', (_req: Request, res: Response) => {
+app.get('/api/public/bootstrap', (req: AuthedRequest, res: Response) => {
   const settings = getSettings();
   const courses = listOrdered<CoursePackage>('courses').filter((c) => c.status === 'LIVE');
   const testSeries = listOrdered<TestSeriesPackage>('test_series').filter(
@@ -160,6 +228,7 @@ app.get('/api/public/bootstrap', (_req: Request, res: Response) => {
     folders,
     liveExams: exams,
     license: getPublicLicenseSummary(),
+    authSession: req.session ?? null,
     stats: {
       examCount: exams.length,
       questionCount,
@@ -431,6 +500,7 @@ app.post('/api/public/quick-join', (req: Request, res: Response) => {
   }
 
   const token = createSession('student', student.id, student.email);
+  setSessionCookie(req, res, token);
   const allQuestions = listOrdered<QuestionItem>('questions');
   const examQuestions = exam.questionIds
     .map((id) => allQuestions.find((q) => q.id === id))
@@ -503,6 +573,7 @@ app.post('/api/auth/admin/setup', (req: Request, res: Response) => {
     'INSERT INTO admin_auth (id, email, passcode_hash, updated_at) VALUES (1, ?, ?, ?)'
   ).run(email, hashSecret(passcode), new Date().toISOString());
   const token = createSession('admin', 'admin-1', email);
+  setSessionCookie(req, res, token);
   res.status(201).json({ token, role: 'admin', email });
 });
 
@@ -529,6 +600,7 @@ app.post('/api/auth/admin/login', (req: Request, res: Response) => {
     return;
   }
   const token = createSession('admin', 'admin-1', adminRow.email);
+  setSessionCookie(req, res, token);
   res.json({ token, role: 'admin', email: adminRow.email });
 });
 
@@ -594,6 +666,7 @@ app.post('/api/auth/student/login', (req: Request, res: Response) => {
   }
   const student = JSON.parse(row.data) as StudentRecord;
   const token = createSession('student', student.id, student.email);
+  setSessionCookie(req, res, token);
   res.json({ token, role: 'student', student });
 });
 
@@ -668,12 +741,14 @@ app.post('/api/auth/student/signup', (req: Request, res: Response) => {
   );
 
   const token = createSession('student', student.id, student.email);
+  setSessionCookie(req, res, token);
   res.status(201).json({ token, role: 'student', student });
 });
 
 app.post('/api/auth/logout', (req: Request, res: Response) => {
-  const token = extractBearer(req);
+  const token = extractAuthToken(req);
   if (token) deleteSession(token);
+  clearSessionCookie(req, res);
   res.json({ ok: true });
 });
 
@@ -1561,6 +1636,7 @@ app.post('/api/auth/owner/login', async (req: Request, res: Response) => {
   }
 
   const token = createSession('owner', 'owner-1', stored.username);
+  setSessionCookie(req, res, token);
   res.json({
     token,
     role: 'owner',
@@ -2018,13 +2094,14 @@ app.patch(
 app.post(
   '/api/owner/client-portal/impersonate-admin',
   requireOwner,
-  (_req: AuthedRequest, res: Response) => {
+  (req: AuthedRequest, res: Response) => {
     const settings = getSettings();
     const adminRow = db.prepare('SELECT email FROM admin_auth WHERE id = 1').get() as
       | { email: string }
       | undefined;
     const email = adminRow?.email || settings.email;
     const token = createSession('admin', 'admin-1', email);
+    setSessionCookie(req, res, token);
     res.json({ token, role: 'admin', email });
   }
 );
@@ -2042,6 +2119,7 @@ app.post(
       return;
     }
     const token = createSession('student', student.id, student.email);
+    setSessionCookie(req, res, token);
     res.json({ token, role: 'student', student });
   }
 );

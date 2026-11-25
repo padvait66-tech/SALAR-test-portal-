@@ -48,6 +48,38 @@ interface SharedExamState {
   subjects: string[];
 }
 
+const PORTAL_VIEW_HINT_KEY = 'salar_portal_view_hint';
+
+function savePortalViewHint(val: 'admin' | 'student' | 'owner' | ''): void {
+  try {
+    if (typeof window === 'undefined') return;
+    if (val) window.sessionStorage.setItem(PORTAL_VIEW_HINT_KEY, val);
+    else window.sessionStorage.removeItem(PORTAL_VIEW_HINT_KEY);
+  } catch {
+    // Ignore storage restrictions
+  }
+}
+
+function readPortalViewHint(): string {
+  try {
+    return typeof window !== 'undefined' ? window.sessionStorage.getItem(PORTAL_VIEW_HINT_KEY) || '' : '';
+  } catch {
+    return '';
+  }
+}
+
+function clearPortalSessionStorage(): void {
+  try {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.removeItem(PORTAL_VIEW_HINT_KEY);
+    window.sessionStorage.removeItem('salar_admin_tab');
+    window.sessionStorage.removeItem('salar_student_tab');
+    window.sessionStorage.removeItem('salar_owner_tab');
+  } catch {
+    // Ignore storage restrictions
+  }
+}
+
 export default function App() {
   const [view, setView] = useState<AppView>(() =>
     parseRouteFromLocation().type === 'owner-login' ? 'owner-login' : 'landing'
@@ -204,7 +236,56 @@ export default function App() {
         const boot = await api.getPublicBootstrap();
         if (!active) return;
         setPublicData(boot);
-        if (immediateRoute.type !== 'owner-login') {
+
+        if (immediateRoute.type === 'owner-login') {
+          if (boot.authSession?.role === 'owner') {
+            try {
+              await refreshOwnerWorkspace();
+              if (!active) return;
+              setSessionRole('owner');
+              setView('owner');
+            } catch {
+              setAuthToken('');
+              clearPortalSessionStorage();
+            }
+          }
+        } else if (immediateRoute.type === 'none') {
+          const sess = boot.authSession;
+          const licenseBlocked =
+            boot.license?.status === 'Suspended' ||
+            boot.license?.status === 'Expired' ||
+            Boolean(boot.license?.portalControls?.maintenanceMode);
+
+          if (sess && !licenseBlocked) {
+            try {
+              if (sess.role === 'admin') {
+                const ws = await refreshAdminWorkspace();
+                if (!active) return;
+                setSessionRole('admin');
+                if (readPortalViewHint() === 'student') {
+                  const studWs = await refreshStudentWorkspace(ws.students[0]?.id);
+                  if (!active) return;
+                  setRunnerStudent(studWs.student);
+                  setReturnRole('student');
+                  setView('student');
+                } else {
+                  setReturnRole('admin');
+                  setView('admin');
+                }
+              } else if (sess.role === 'student') {
+                const studWs = await refreshStudentWorkspace(sess.subjectId);
+                if (!active) return;
+                setSessionRole('student');
+                setReturnRole('student');
+                setRunnerStudent(studWs.student);
+                setView('student');
+              }
+            } catch {
+              setAuthToken('');
+              clearPortalSessionStorage();
+            }
+          }
+        } else {
           await handleCurrentRoute();
         }
       } catch (err) {
@@ -250,6 +331,7 @@ export default function App() {
   const handleAuthenticatedStudent = async (student: StudentRecord) => {
     setSessionRole('student');
     setReturnRole('student');
+    savePortalViewHint('student');
     setRunnerStudent(student);
     await refreshStudentWorkspace(student.id);
     setView('student');
@@ -258,12 +340,14 @@ export default function App() {
   const handleAuthenticatedAdmin = async () => {
     setSessionRole('admin');
     setReturnRole('admin');
+    savePortalViewHint('admin');
     await refreshAdminWorkspace();
     setView('admin');
   };
 
   const handleAuthenticatedOwner = async (preloadedWorkspace?: OwnerWorkspaceResponse) => {
     setSessionRole('owner');
+    savePortalViewHint('owner');
     if (preloadedWorkspace) {
       setOwnerWorkspace(preloadedWorkspace);
     } else {
@@ -279,6 +363,7 @@ export default function App() {
       // Ignore network errors on sign out
     }
     setAuthToken('');
+    clearPortalSessionStorage();
     setSessionRole('none');
     setStudentWorkspace(null);
     setAdminWorkspace(null);
@@ -625,6 +710,7 @@ export default function App() {
             window.history.replaceState(null, '', '/');
             setSessionRole('admin');
             setReturnRole('admin');
+            savePortalViewHint('admin');
             await refreshAdminWorkspace();
             setView('admin');
           }}
@@ -632,6 +718,7 @@ export default function App() {
             window.history.replaceState(null, '', '/');
             setSessionRole('student');
             setReturnRole('student');
+            savePortalViewHint('student');
             const ws = await refreshStudentWorkspace();
             setRunnerStudent(ws.student);
             setView('student');
@@ -666,6 +753,7 @@ export default function App() {
           onSwitchToAdmin={
             sessionRole === 'admin'
               ? async () => {
+                  savePortalViewHint('admin');
                   await refreshAdminWorkspace();
                   setReturnRole('admin');
                   setView('admin');
@@ -848,6 +936,7 @@ export default function App() {
             void openSharedExamById(examId, false);
           }}
           onSwitchToStudent={async () => {
+            savePortalViewHint('student');
             const targetId = adminWorkspace.students[0]?.id;
             await refreshStudentWorkspace(targetId);
             setReturnRole('student');

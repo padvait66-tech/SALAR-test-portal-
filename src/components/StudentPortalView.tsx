@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowRight,
   Award,
@@ -83,7 +83,21 @@ export function StudentPortalView({
   onSwitchToAdmin,
   onLogout,
 }: StudentPortalViewProps) {
-  const [activeTab, setActiveTab] = useState<StudentTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<StudentTab>(() => {
+    try {
+      const saved = window.sessionStorage.getItem('salar_student_tab') as StudentTab | null;
+      return saved || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('salar_student_tab', activeTab);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [activeTab]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Exam filters

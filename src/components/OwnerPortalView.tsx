@@ -220,7 +220,27 @@ export function OwnerPortalView({
 }: OwnerPortalViewProps) {
   const [activeTab, setActiveTab] = useState<
     'clients' | 'plans' | 'billing' | 'portal' | 'profile'
-  >('clients');
+  >(() => {
+    try {
+      const saved = window.sessionStorage.getItem('salar_owner_tab') as
+        | 'clients'
+        | 'plans'
+        | 'billing'
+        | 'portal'
+        | 'profile'
+        | null;
+      return saved || 'clients';
+    } catch {
+      return 'clients';
+    }
+  });
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('salar_owner_tab', activeTab);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [activeTab]);
   const [toast, setToast] = useState('');
   const [errorBanner, setErrorBanner] = useState('');
   const [busy, setBusy] = useState(false);

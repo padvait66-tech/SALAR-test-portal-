@@ -20,11 +20,34 @@ import type {
   TestSeriesPackage,
 } from '../types/portal';
 
-// Bearer token kept strictly in memory (never localStorage or sessionStorage)
-let memoryAuthToken = '';
+const AUTH_TOKEN_STORAGE_KEY = 'salar_portal_auth_token';
+
+function readStoredAuthToken(): string {
+  try {
+    return typeof window !== 'undefined' ? window.sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || '' : '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredAuthToken(token: string): void {
+  try {
+    if (typeof window === 'undefined') return;
+    if (token) {
+      window.sessionStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    } else {
+      window.sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors in restricted environments
+  }
+}
+
+let memoryAuthToken = readStoredAuthToken();
 
 export function setAuthToken(token: string): void {
   memoryAuthToken = token;
+  writeStoredAuthToken(token);
 }
 
 export function getAuthToken(): string {
@@ -39,7 +62,7 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   if (memoryAuthToken) {
     headers.set('Authorization', `Bearer ${memoryAuthToken}`);
   }
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { credentials: 'same-origin', ...options, headers });
   const rawText = await res.text();
   let data = {} as T & { error?: string };
   if (rawText) {
@@ -68,6 +91,11 @@ export interface PublicBootstrapResponse {
   folders: TestFolder[];
   liveExams: ExamPaper[];
   license?: PublicLicenseSummary;
+  authSession?: {
+    role: 'student' | 'admin' | 'owner';
+    subjectId: string;
+    email: string;
+  } | null;
   stats: { examCount: number; questionCount: number };
 }
 
@@ -119,6 +147,12 @@ export interface OwnerWorkspaceResponse {
 
 export const api = {
   getPublicBootstrap: () => apiFetch<PublicBootstrapResponse>('/api/public/bootstrap'),
+
+  getAuthSession: () =>
+    apiFetch<{
+      authenticated: boolean;
+      session: { role: 'student' | 'admin' | 'owner'; subjectId: string; email: string } | null;
+    }>('/api/auth/session'),
 
   getPublicExam: (examId: string) =>
     apiFetch<{
