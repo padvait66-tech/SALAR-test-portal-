@@ -38,7 +38,20 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
     headers.set('Authorization', `Bearer ${memoryAuthToken}`);
   }
   const res = await fetch(url, { ...options, headers });
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  const rawText = await res.text();
+  let data = {} as T & { error?: string };
+  if (rawText) {
+    try {
+      data = JSON.parse(rawText) as T & { error?: string };
+    } catch {
+      if (res.ok) {
+        throw new Error(
+          'Portal API returned HTML instead of JSON. Ensure the Node/Express or Vercel /api backend is deployed.'
+        );
+      }
+      throw new Error(`Server error (${res.status}). Check API deployment logs.`);
+    }
+  }
   if (!res.ok) {
     throw new Error(data.error || `Request failed (${res.status})`);
   }

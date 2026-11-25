@@ -107,7 +107,8 @@ function requireOwner(req: AuthedRequest, res: Response, next: NextFunction): vo
 function isPortalLicenseBlocked(): string | null {
   const summary = getPublicLicenseSummary();
   if (summary.status === 'Suspended' || summary.status === 'Expired') {
-    return `Portal license (${summary.licenseKey}) is ${summary.status}. Contact ${summary.licensor} (₹${summary.price}/${summary.billingCycle}) to renew access.`;
+    const support = summary.supportContact || 'support@salartech.in';
+    return `Your ID (${summary.licenseKey}) is ${summary.status}. Contact ${summary.licensor} Support Team (${support}) for more info.`;
   }
   return null;
 }
@@ -489,6 +490,11 @@ app.post('/api/auth/admin/setup', (req: Request, res: Response) => {
 });
 
 app.post('/api/auth/admin/login', (req: Request, res: Response) => {
+  const licenseBlocked = isPortalLicenseBlocked();
+  if (licenseBlocked) {
+    res.status(403).json({ error: licenseBlocked });
+    return;
+  }
   const body = req.body as { email?: string; passcode?: string };
   const email = String(body.email || '')
     .trim()
@@ -537,6 +543,11 @@ app.post('/api/auth/admin/change-passcode', requireAdmin, (req: AuthedRequest, r
 
 // Student Authentication & Signup
 app.post('/api/auth/student/login', (req: Request, res: Response) => {
+  const licenseBlocked = isPortalLicenseBlocked();
+  if (licenseBlocked) {
+    res.status(403).json({ error: licenseBlocked });
+    return;
+  }
   const body = req.body as { identifier?: string; password?: string };
   const query = String(body.identifier || '')
     .trim()
@@ -570,6 +581,11 @@ app.post('/api/auth/student/login', (req: Request, res: Response) => {
 });
 
 app.post('/api/auth/student/signup', (req: Request, res: Response) => {
+  const licenseBlocked = isPortalLicenseBlocked();
+  if (licenseBlocked) {
+    res.status(403).json({ error: licenseBlocked });
+    return;
+  }
   const body = req.body as {
     name?: string;
     phone?: string;
@@ -1458,18 +1474,20 @@ app.delete('/api/admin/test-series/:id', requireAdmin, (req: AuthedRequest, res:
 app.post('/api/auth/owner/login', (req: Request, res: Response) => {
   const body = req.body as { username?: string; password?: string };
   const inputUser = String(body.username || '').trim();
-  const inputPass = String(body.password || '');
+  const inputPass = String(body.password || '').trim();
   if (!inputUser || !inputPass) {
     res.status(400).json({ error: 'Username and password are required.' });
     return;
   }
+
+  const normalizeUser = (u: string) => u.toLowerCase().replace(/\s+/g, '');
 
   const envUser = (process.env.OWNER_USERNAME || '').trim();
   const envPass = (process.env.OWNER_PASSWORD || '').trim();
 
   if (envPass.length >= 4) {
     const expectedUser = envUser || 'SALAR Tech';
-    const userOk = inputUser.toLowerCase() === expectedUser.toLowerCase();
+    const userOk = normalizeUser(inputUser) === normalizeUser(expectedUser);
     const passBuf = Buffer.from(inputPass, 'utf8');
     const expectedBuf = Buffer.from(envPass, 'utf8');
     const passOk =
@@ -1489,7 +1507,7 @@ app.post('/api/auth/owner/login', (req: Request, res: Response) => {
     return;
   }
 
-  const userOk = inputUser.toLowerCase() === stored.username.toLowerCase();
+  const userOk = normalizeUser(inputUser) === normalizeUser(stored.username);
   const passOk = verifySecret(inputPass, stored.passwordHash);
   if (!userOk || !passOk) {
     res.status(401).json({ error: 'Invalid owner credentials.' });
@@ -1597,6 +1615,11 @@ app.post('/api/owner/clients', requireOwner, (req: AuthedRequest, res: Response)
     });
   }
 
+  const trialStartDate = String(body.trialStartDate || '').trim() || undefined;
+  const trialEndDate = String(body.trialEndDate || '').trim() || undefined;
+  const supportContact =
+    String(body.supportContact || '').trim() || '+91 98230 11223 · support@salartech.in';
+
   const client: ClientLicense = {
     id: body.id || `lic-${Date.now()}`,
     clientName,
@@ -1617,7 +1640,11 @@ app.post('/api/owner/clients', requireOwner, (req: AuthedRequest, res: Response)
     issuedAt: body.issuedAt || new Date().toISOString().slice(0, 10),
     expiresAt:
       body.expiresAt ||
+      trialEndDate ||
       new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toISOString().slice(0, 10),
+    trialStartDate,
+    trialEndDate,
+    supportContact,
     isPrimaryPortal: Boolean(body.isPrimaryPortal),
     notes: String(body.notes || '').trim(),
   };
@@ -1673,6 +1700,18 @@ app.put('/api/owner/clients/:id', requireOwner, (req: AuthedRequest, res: Respon
         : existing.maxStudents,
     status: body.status || existing.status,
     expiresAt: body.expiresAt || existing.expiresAt,
+    trialStartDate:
+      body.trialStartDate !== undefined
+        ? String(body.trialStartDate).trim() || undefined
+        : existing.trialStartDate,
+    trialEndDate:
+      body.trialEndDate !== undefined
+        ? String(body.trialEndDate).trim() || undefined
+        : existing.trialEndDate,
+    supportContact:
+      body.supportContact !== undefined
+        ? String(body.supportContact).trim() || undefined
+        : existing.supportContact,
     isPrimaryPortal:
       body.isPrimaryPortal !== undefined ? Boolean(body.isPrimaryPortal) : existing.isPrimaryPortal,
     notes: body.notes !== undefined ? String(body.notes).trim() : existing.notes,
@@ -1713,7 +1752,7 @@ export { app };
 async function startStandaloneServer(): Promise<void> {
   // Mount Vite dev middleware in development or serve built static files in production
   const isProd =
-    process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve('dist/index.html'));
+    process.env.NODE_ENV !== 'development' && fs.existsSync(path.resolve('dist/index.html'));
 
   if (isProd) {
     const distPath = path.resolve('dist');
@@ -1722,7 +1761,8 @@ async function startStandaloneServer(): Promise<void> {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
-    const { createServer: createViteServer } = await import('vite');
+    const vitePkg = 'vite';
+    const { createServer: createViteServer } = (await import(vitePkg)) as typeof import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

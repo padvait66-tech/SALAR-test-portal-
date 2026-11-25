@@ -27,6 +27,11 @@ import type {
 } from '../types/portal';
 import { api, setAuthToken, type OwnerWorkspaceResponse } from '../api/client';
 import { ConfirmDialog } from './ConfirmDialog';
+import {
+  formatTrialRange,
+  parseTrialRangeInput,
+  toDDMMYYYY,
+} from '../utils/licenseDates';
 
 interface OwnerLoginViewProps {
   settings: InstituteSettings;
@@ -215,10 +220,22 @@ export function OwnerPortalView({
     new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toISOString().slice(0, 10)
   );
   const [newClientPrimary, setNewClientPrimary] = useState(false);
+  const [newClientTrialStart, setNewClientTrialStart] = useState('');
+  const [newClientTrialEnd, setNewClientTrialEnd] = useState('');
+  const [newClientTrialRangeInput, setNewClientTrialRangeInput] = useState('');
+  const [newClientSupportContact, setNewClientSupportContact] = useState(
+    '+91 98230 11223 · support@salartech.in'
+  );
   const [newClientNotes, setNewClientNotes] = useState('');
 
   // Edit client modal
   const [editingClient, setEditingClient] = useState<ClientLicense | null>(null);
+  const [editTrialRangeInput, setEditTrialRangeInput] = useState('');
+
+  const openEditClientModal = (client: ClientLicense) => {
+    setEditingClient({ ...client });
+    setEditTrialRangeInput(formatTrialRange(client.trialStartDate, client.trialEndDate));
+  };
 
   // Add / Edit plan modal
   const [editingPlan, setEditingPlan] = useState<Partial<LicensePlan> | null>(null);
@@ -276,6 +293,9 @@ export function OwnerPortalView({
         maxStudents: Number(newClientMaxStudents) || 500,
         status: newClientStatus,
         expiresAt: newClientExpiresAt,
+        trialStartDate: newClientTrialStart.trim() || undefined,
+        trialEndDate: newClientTrialEnd.trim() || undefined,
+        supportContact: newClientSupportContact.trim() || undefined,
         isPrimaryPortal: newClientPrimary,
         notes: newClientNotes.trim(),
       });
@@ -284,6 +304,9 @@ export function OwnerPortalView({
       setNewClientName('');
       setNewClientEmail('');
       setNewClientPhone('');
+      setNewClientTrialStart('');
+      setNewClientTrialEnd('');
+      setNewClientTrialRangeInput('');
       setNewClientNotes('');
       setNewClientPrimary(false);
       notify('Client license issued and synced.');
@@ -300,7 +323,11 @@ export function OwnerPortalView({
     setBusy(true);
     setErrorBanner('');
     try {
-      await api.updateClientLicense(editingClient.id, editingClient);
+      await api.updateClientLicense(editingClient.id, {
+        ...editingClient,
+        trialStartDate: editingClient.trialStartDate || '',
+        trialEndDate: editingClient.trialEndDate || '',
+      });
       await onRefresh();
       setEditingClient(null);
       notify('Client license terms & owner pricing updated.');
@@ -501,14 +528,23 @@ export function OwnerPortalView({
                   {primaryClient.billingCycle}
                 </strong>{' '}
                 · Plan: {primaryClient.planName} · Valid Until:{' '}
-                <span className="font-mono">{primaryClient.expiresAt}</span> · Current Portal Data:{' '}
-                {workspace.portalStats.studentsCount} students, {workspace.portalStats.examsCount}{' '}
-                exams
+                <span className="font-mono">{toDDMMYYYY(primaryClient.expiresAt)}</span>
+                {formatTrialRange(primaryClient.trialStartDate, primaryClient.trialEndDate) && (
+                  <>
+                    {' '}
+                    · Trial:{' '}
+                    <span className="font-mono font-semibold text-[#0F3CC9]">
+                      {formatTrialRange(primaryClient.trialStartDate, primaryClient.trialEndDate)}
+                    </span>
+                  </>
+                )}{' '}
+                · Current Portal Data: {workspace.portalStats.studentsCount} students,{' '}
+                {workspace.portalStats.examsCount} exams
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setEditingClient({ ...primaryClient })}
+              onClick={() => openEditClientModal(primaryClient)}
               className="px-3.5 py-2 text-xs font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded shrink-0"
             >
               Adjust Client Price / Status
@@ -679,8 +715,15 @@ export function OwnerPortalView({
                       <p className="text-[11px] text-slate-500">{c.billingCycle} Billing</p>
                     </td>
                     <td className="py-3.5 px-4 font-mono text-slate-600">
-                      <p>Expires: {c.expiresAt}</p>
-                      <p className="text-[11px] text-slate-400">Issued: {c.issuedAt}</p>
+                      <p>Expires: {toDDMMYYYY(c.expiresAt)}</p>
+                      {formatTrialRange(c.trialStartDate, c.trialEndDate) && (
+                        <p className="text-[11px] font-semibold text-[#0F3CC9] mt-0.5">
+                          Trial: {formatTrialRange(c.trialStartDate, c.trialEndDate)}
+                        </p>
+                      )}
+                      <p className="text-[11px] text-slate-400">
+                        Issued: {toDDMMYYYY(c.issuedAt)}
+                      </p>
                     </td>
                     <td className="py-3.5 px-4">
                       <span
@@ -696,7 +739,7 @@ export function OwnerPortalView({
                         <button
                           type="button"
                           disabled={busy}
-                          onClick={() => setEditingClient({ ...c })}
+                          onClick={() => openEditClientModal(c)}
                           className="px-2 py-1 text-[11px] font-semibold text-[#0F3CC9] bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1"
                         >
                           <Edit3 className="w-3 h-3" />
@@ -1078,13 +1121,128 @@ export function OwnerPortalView({
                 </label>
               </div>
 
+              <div className="border border-slate-200 bg-slate-50 rounded p-3 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800">
+                    Trial Date Range (DD-MM-YYYY to DD-MM-YYYY)
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {[7, 15, 30].map((days) => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => {
+                          const start = new Date().toISOString().slice(0, 10);
+                          const end = new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+                            .toISOString()
+                            .slice(0, 10);
+                          setNewClientTrialStart(start);
+                          setNewClientTrialEnd(end);
+                          setNewClientTrialRangeInput(formatTrialRange(start, end));
+                          if (newClientStatus === 'Trial') {
+                            setNewClientExpiresAt(end);
+                          }
+                        }}
+                        className="px-2 py-0.5 text-[10px] font-mono bg-white border border-slate-300 rounded hover:bg-slate-100"
+                      >
+                        {days}d Trial
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewClientTrialStart('');
+                        setNewClientTrialEnd('');
+                        setNewClientTrialRangeInput('');
+                      }}
+                      className="px-2 py-0.5 text-[10px] font-mono text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-100"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  value={newClientTrialRangeInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setNewClientTrialRangeInput(val);
+                    const parsed = parseTrialRangeInput(val);
+                    if (parsed) {
+                      setNewClientTrialStart(parsed.start);
+                      setNewClientTrialEnd(parsed.end);
+                      if (parsed.end && newClientStatus === 'Trial') {
+                        setNewClientExpiresAt(parsed.end);
+                      }
+                    }
+                  }}
+                  onBlur={() => {
+                    const formatted = formatTrialRange(newClientTrialStart, newClientTrialEnd);
+                    if (formatted) setNewClientTrialRangeInput(formatted);
+                  }}
+                  placeholder="02-02-2026 to 03-03-2026"
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded font-mono bg-white"
+                />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-0.5">Trial Start</label>
+                    <input
+                      type="date"
+                      value={newClientTrialStart}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewClientTrialStart(val);
+                        setNewClientTrialRangeInput(formatTrialRange(val, newClientTrialEnd));
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-0.5">Trial End</label>
+                    <input
+                      type="date"
+                      value={newClientTrialEnd}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewClientTrialEnd(val);
+                        setNewClientTrialRangeInput(formatTrialRange(newClientTrialStart, val));
+                        if (val && newClientStatus === 'Trial') {
+                          setNewClientExpiresAt(val);
+                        }
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono bg-white"
+                    />
+                  </div>
+                </div>
+                {formatTrialRange(newClientTrialStart, newClientTrialEnd) && (
+                  <p className="text-[11px] font-mono text-[#0F3CC9]">
+                    Formatted Trial Window: {formatTrialRange(newClientTrialStart, newClientTrialEnd)}
+                  </p>
+                )}
+              </div>
+
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Owner Notes</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Support Team Contact (shown if ID suspended)
+                </label>
+                <input
+                  type="text"
+                  value={newClientSupportContact}
+                  onChange={(e) => setNewClientSupportContact(e.target.value)}
+                  placeholder="+91 98230 11223 · support@salartech.in"
+                  className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Owner / Suspension Notes
+                </label>
                 <input
                   type="text"
                   value={newClientNotes}
                   onChange={(e) => setNewClientNotes(e.target.value)}
-                  placeholder="Agreement terms, custom renewal notes..."
+                  placeholder="Suspension reason, renewal terms, or trial info..."
                   className="w-full px-3 py-2 border border-slate-300 rounded"
                 />
               </div>
@@ -1275,14 +1433,153 @@ export function OwnerPortalView({
                 </label>
               </div>
 
+              <div className="border border-slate-200 bg-slate-50 rounded p-3 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800">
+                    Trial Date Range (DD-MM-YYYY to DD-MM-YYYY)
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {[7, 15, 30].map((days) => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => {
+                          const start = new Date().toISOString().slice(0, 10);
+                          const end = new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+                            .toISOString()
+                            .slice(0, 10);
+                          setEditTrialRangeInput(formatTrialRange(start, end));
+                          setEditingClient((c) =>
+                            c
+                              ? {
+                                  ...c,
+                                  trialStartDate: start,
+                                  trialEndDate: end,
+                                  expiresAt: c.status === 'Trial' ? end : c.expiresAt,
+                                }
+                              : c
+                          );
+                        }}
+                        className="px-2 py-0.5 text-[10px] font-mono bg-white border border-slate-300 rounded hover:bg-slate-100"
+                      >
+                        {days}d Trial
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditTrialRangeInput('');
+                        setEditingClient((c) =>
+                          c ? { ...c, trialStartDate: '', trialEndDate: '' } : c
+                        );
+                      }}
+                      className="px-2 py-0.5 text-[10px] font-mono text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-100"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  value={editTrialRangeInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setEditTrialRangeInput(val);
+                    const parsed = parseTrialRangeInput(val);
+                    if (parsed) {
+                      setEditingClient((c) =>
+                        c
+                          ? {
+                              ...c,
+                              trialStartDate: parsed.start,
+                              trialEndDate: parsed.end,
+                              expiresAt:
+                                parsed.end && c.status === 'Trial' ? parsed.end : c.expiresAt,
+                            }
+                          : c
+                      );
+                    }
+                  }}
+                  onBlur={() => {
+                    const formatted = formatTrialRange(
+                      editingClient.trialStartDate,
+                      editingClient.trialEndDate
+                    );
+                    if (formatted) setEditTrialRangeInput(formatted);
+                  }}
+                  placeholder="02-02-2026 to 03-03-2026"
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded font-mono bg-white"
+                />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-0.5">Trial Start</label>
+                    <input
+                      type="date"
+                      value={editingClient.trialStartDate || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditTrialRangeInput(formatTrialRange(val, editingClient.trialEndDate));
+                        setEditingClient((c) => (c ? { ...c, trialStartDate: val } : c));
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-0.5">Trial End</label>
+                    <input
+                      type="date"
+                      value={editingClient.trialEndDate || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditTrialRangeInput(formatTrialRange(editingClient.trialStartDate, val));
+                        setEditingClient((c) =>
+                          c
+                            ? {
+                                ...c,
+                                trialEndDate: val,
+                                expiresAt: val && c.status === 'Trial' ? val : c.expiresAt,
+                              }
+                            : c
+                        );
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded font-mono bg-white"
+                    />
+                  </div>
+                </div>
+                {formatTrialRange(editingClient.trialStartDate, editingClient.trialEndDate) && (
+                  <p className="text-[11px] font-mono text-[#0F3CC9]">
+                    Formatted Trial Window:{' '}
+                    {formatTrialRange(editingClient.trialStartDate, editingClient.trialEndDate)}
+                  </p>
+                )}
+              </div>
+
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Notes</label>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Support Team Contact (shown in Get More Info when suspended)
+                </label>
+                <input
+                  type="text"
+                  value={editingClient.supportContact || ''}
+                  onChange={(e) =>
+                    setEditingClient((c) => (c ? { ...c, supportContact: e.target.value } : c))
+                  }
+                  placeholder="+91 98230 11223 · support@salartech.in"
+                  className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Owner / Suspension Notes
+                </label>
                 <input
                   type="text"
                   value={editingClient.notes}
                   onChange={(e) =>
                     setEditingClient((c) => (c ? { ...c, notes: e.target.value } : c))
                   }
+                  placeholder="Suspension reason, payment pending note, or trial remarks..."
                   className="w-full px-3 py-2 border border-slate-300 rounded"
                 />
               </div>

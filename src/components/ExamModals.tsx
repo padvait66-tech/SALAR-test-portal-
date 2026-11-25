@@ -328,6 +328,7 @@ export function CreateExamFolderModal({
                       className="w-full px-3 py-2 border border-slate-300 rounded bg-white text-slate-900"
                     >
                       <option value="PCM">Combined PCM</option>
+                      <option value="PCMB">Combined PCMB</option>
                       <option value="Physics">Physics</option>
                       <option value="Chemistry">Chemistry</option>
                       <option value="Mathematics">Mathematics</option>

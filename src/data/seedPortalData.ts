@@ -766,12 +766,42 @@ export const INITIAL_QUESTIONS: QuestionItem[] = [
       'For $l = 3$, there are $2l + 1 = 7$ orbitals, holding up to $2 \\times 7 = 14$ electrons.',
     createdAt: '2026-06-24',
   },
+  {
+    id: 'q-bio-gen-2',
+    code: 'GC-BIO-12-02',
+    subject: 'Biology',
+    topic: 'Molecular Basis of Inheritance',
+    type: 'single_choice',
+    difficulty: 'Moderate',
+    targetClass: '12th',
+    questionText:
+      'Which enzyme is responsible for synthesizing short RNA primers during DNA replication in prokaryotes?',
+    formulaNote: 'Replication proceeds strictly in the $5\' \\to 3\'$ direction.',
+    options: [
+      { id: 'opt-1', label: 'A', text: 'Primase (RNA polymerase)' },
+      { id: 'opt-2', label: 'B', text: 'DNA Ligase' },
+      { id: 'opt-3', label: 'C', text: 'DNA Helicase' },
+      { id: 'opt-4', label: 'D', text: 'Topoisomerase II' },
+    ],
+    correctAnswer: 'A',
+    marksPositive: 4,
+    marksNegative: -1,
+    explanation:
+      'Primase synthesizes a short RNA primer providing a free $3\'-\\text{OH}$ group required by DNA polymerase III to initiate strand elongation.',
+    createdAt: '2026-06-25',
+  },
 ];
 
 export const SUBJECT_PCM_QUESTIONS: QuestionItem[] = INITIAL_QUESTIONS.filter((q) =>
-  ['q-phys-grav-3', 'q-phys-opt-4', 'q-phys-thermo-5', 'q-chem-kin-2', 'q-chem-org-3', 'q-chem-atom-4'].includes(
-    q.id
-  )
+  [
+    'q-phys-grav-3',
+    'q-phys-opt-4',
+    'q-phys-thermo-5',
+    'q-chem-kin-2',
+    'q-chem-org-3',
+    'q-chem-atom-4',
+    'q-bio-gen-2',
+  ].includes(q.id)
 );
 
 export const SUBJECT_PCM_EXAMS: ExamPaper[] = [
@@ -834,6 +864,62 @@ export const SUBJECT_PCM_EXAMS: ExamPaper[] = [
     startTime: '2026-06-25T09:00',
     endTime: '2026-12-31T23:59',
     createdAt: '2026-06-25',
+  },
+  {
+    id: 'exam-pcm-combined',
+    title: 'PCM Combined Test — Physics, Chemistry & Mathematics',
+    code: 'GC-PCM-TEST',
+    folderId: 'folder-5',
+    subject: 'PCM',
+    targetClass: 'All',
+    durationMinutes: 60,
+    status: 'Live',
+    questionIds: [
+      'q-phys-grav-3',
+      'q-phys-opt-4',
+      'q-chem-eq-1',
+      'q-chem-kin-2',
+      'q-11-trig-1',
+      'q-12-int-1',
+    ],
+    marksPositive: 4,
+    marksNegative: -1,
+    instructions: [
+      'Combined PCM assessment covering Physics, Chemistry, and Mathematics.',
+      '+4 marks for correct answers; -1 for incorrect single-choice; 0 negative marks for numericals.',
+    ],
+    startTime: '2026-06-26T09:00',
+    endTime: '2026-12-31T23:59',
+    createdAt: '2026-06-26',
+  },
+  {
+    id: 'exam-pcmb-combined',
+    title: 'PCMB Combined Test — Physics, Chemistry, Maths & Biology',
+    code: 'GC-PCMB-TEST',
+    folderId: 'folder-5',
+    subject: 'PCMB',
+    targetClass: 'All',
+    durationMinutes: 90,
+    status: 'Live',
+    questionIds: [
+      'q-phys-mech-1',
+      'q-phys-thermo-5',
+      'q-chem-org-3',
+      'q-chem-atom-4',
+      'q-11-pnc-2',
+      'q-12-mat-3',
+      'q-bio-phys-1',
+      'q-bio-gen-2',
+    ],
+    marksPositive: 4,
+    marksNegative: -1,
+    instructions: [
+      'Combined PCMB full-stream assessment spanning Physics, Chemistry, Mathematics, and Biology.',
+      '+4 marks for correct answers; -1 for incorrect single-choice; 0 negative marks for numericals.',
+    ],
+    startTime: '2026-06-26T09:00',
+    endTime: '2026-12-31T23:59',
+    createdAt: '2026-06-26',
   },
 ];
 

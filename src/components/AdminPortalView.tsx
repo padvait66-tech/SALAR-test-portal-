@@ -67,6 +67,7 @@ import {
   ImportPdfModal,
 } from './ExamModals';
 import { buildShortExamUrl, encodeHydratedBundle } from '../utils/shareLinks';
+import { formatTrialRange, toDDMMYYYY } from '../utils/licenseDates';
 
 export type AdminTab =
   | 'dashboard'
@@ -878,7 +879,15 @@ export function AdminPortalView({
                         {license.billingCycle}
                       </span>
                       <span className="text-slate-500"> · Valid Until: </span>
-                      <span className="font-mono">{license.expiresAt}</span>
+                      <span className="font-mono">{toDDMMYYYY(license.expiresAt)}</span>
+                      {formatTrialRange(license.trialStartDate, license.trialEndDate) && (
+                        <>
+                          <span className="text-slate-500"> · Trial: </span>
+                          <span className="font-mono font-semibold text-[#0F3CC9]">
+                            {formatTrialRange(license.trialStartDate, license.trialEndDate)}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2.5 shrink-0">
@@ -1719,7 +1728,9 @@ export function AdminPortalView({
                   { id: 'Physics', label: 'Physics Tests' },
                   { id: 'Chemistry', label: 'Chemistry Tests' },
                   { id: 'Mathematics', label: 'Maths Tests' },
+                  { id: 'Biology', label: 'Biology Tests' },
                   { id: 'PCM', label: 'Combined PCM' },
+                  { id: 'PCMB', label: 'Combined PCMB' },
                 ].map((sub) => (
                   <button
                     key={sub.id}
@@ -1960,15 +1971,18 @@ export function AdminPortalView({
                     onChange={(e) => {
                       const nextSub = e.target.value as ExamSubject;
                       setExSubject(nextSub);
-                      setExBankSubjectFilter(nextSub === 'PCM' ? 'All' : nextSub);
+                      setExBankSubjectFilter(
+                        nextSub === 'PCM' || nextSub === 'PCMB' ? 'All' : nextSub
+                      );
                     }}
                     className="w-full px-3 py-2 border border-slate-300 rounded bg-white"
                   >
                     <option value="Physics">Physics</option>
                     <option value="Chemistry">Chemistry</option>
                     <option value="Mathematics">Mathematics</option>
-                    <option value="PCM">Combined PCM</option>
                     <option value="Biology">Biology</option>
+                    <option value="PCM">Combined PCM</option>
+                    <option value="PCMB">Combined PCMB</option>
                   </select>
                 </div>
                 <div>
@@ -2054,8 +2068,14 @@ export function AdminPortalView({
                             ? questions.filter((q) =>
                                 ['Physics', 'Chemistry', 'Mathematics'].includes(q.subject)
                               )
+                            : exSubject === 'PCMB'
+                            ? questions.filter((q) =>
+                                ['Physics', 'Chemistry', 'Mathematics', 'Biology'].includes(
+                                  q.subject
+                                )
+                              )
                             : questions.filter((q) => q.subject === exSubject);
-                        setSelectedQIds((pool.length ? pool : questions).slice(0, 5).map((q) => q.id));
+                        setSelectedQIds((pool.length ? pool : questions).slice(0, 8).map((q) => q.id));
                       }}
                       className="px-3 py-1.5 font-medium bg-slate-100 text-slate-700 rounded hover:bg-slate-200"
                     >
@@ -3120,10 +3140,34 @@ export function AdminPortalView({
                     <div>
                       <p className="text-[11px] text-slate-500">Valid Until · Capacity</p>
                       <p className="font-mono font-semibold text-slate-900 mt-0.5">
-                        {license.expiresAt} · {license.maxStudents} seats
+                        {toDDMMYYYY(license.expiresAt)} · {license.maxStudents} seats
                       </p>
                     </div>
                   </div>
+
+                  {(formatTrialRange(license.trialStartDate, license.trialEndDate) ||
+                    license.supportContact) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-blue-50/40 border border-blue-200 rounded-lg p-3.5">
+                      {formatTrialRange(license.trialStartDate, license.trialEndDate) && (
+                        <div>
+                          <p className="text-[11px] text-slate-500">Trial Period</p>
+                          <p className="font-mono font-semibold text-[#0F3CC9] mt-0.5">
+                            {formatTrialRange(license.trialStartDate, license.trialEndDate)}
+                          </p>
+                        </div>
+                      )}
+                      {license.supportContact && (
+                        <div>
+                          <p className="text-[11px] text-slate-500">
+                            {license.licensor} Support Team
+                          </p>
+                          <p className="font-mono font-semibold text-slate-900 mt-0.5">
+                            {license.supportContact}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {license.plans.length > 0 && (
                     <div className="space-y-3">

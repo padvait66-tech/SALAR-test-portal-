@@ -27,7 +27,7 @@ export interface QuestionItem {
   createdAt: string;
 }
 
-export type ExamSubject = 'Physics' | 'Chemistry' | 'Mathematics' | 'PCM' | 'Biology';
+export type ExamSubject = 'Physics' | 'Chemistry' | 'Mathematics' | 'Biology' | 'PCM' | 'PCMB';
 
 export interface TestFolder {
   id: string;
@@ -239,6 +239,9 @@ export interface ClientLicense {
   status: ClientLicenseStatus;
   issuedAt: string;
   expiresAt: string;
+  trialStartDate?: string;
+  trialEndDate?: string;
+  supportContact?: string;
   isPrimaryPortal: boolean;
   notes: string;
 }
@@ -251,7 +254,12 @@ export interface PublicLicenseSummary {
   price: number;
   billingCycle: LicenseBillingCycle;
   status: ClientLicenseStatus;
+  issuedAt?: string;
   expiresAt: string;
+  trialStartDate?: string;
+  trialEndDate?: string;
+  supportContact?: string;
+  notes?: string;
   maxStudents: number;
   plans: LicensePlan[];
 }

@@ -29,6 +29,7 @@ import { AuthModal } from './components/AuthModal';
 import { StudentPortalView } from './components/StudentPortalView';
 import { AdminPortalView } from './components/AdminPortalView';
 import { OwnerLoginView, OwnerPortalView } from './components/OwnerPortalView';
+import { PortalSuspendedView } from './components/PortalSuspendedView';
 import { ExamRunnerView } from './components/ExamRunnerView';
 import { ResultScorecardView } from './components/ResultScorecardView';
 import {
@@ -193,6 +194,10 @@ export default function App() {
     }
 
     async function init() {
+      const immediateRoute = parseRouteFromLocation();
+      if (immediateRoute.type === 'owner-login') {
+        setView('owner-login');
+      }
       try {
         const boot = await api.getPublicBootstrap();
         if (!active) return;
@@ -431,6 +436,21 @@ export default function App() {
           <p className="text-xs text-slate-500">Connecting to examination database</p>
         </div>
       </div>
+    );
+  }
+
+  const isLicenseBlocked =
+    (currentLicense?.status === 'Suspended' || currentLicense?.status === 'Expired') &&
+    view !== 'owner-login' &&
+    view !== 'owner';
+
+  if (isLicenseBlocked && currentLicense) {
+    return (
+      <PortalSuspendedView
+        license={currentLicense}
+        settings={currentSettings}
+        onSecretOwnerTrigger={() => setView('owner-login')}
+      />
     );
   }
 

@@ -634,7 +634,9 @@ export function StudentPortalView({
                       { id: 'Physics', label: 'Physics' },
                       { id: 'Chemistry', label: 'Chemistry' },
                       { id: 'Mathematics', label: 'Mathematics' },
+                      { id: 'Biology', label: 'Biology' },
                       { id: 'PCM', label: 'PCM Mock' },
+                      { id: 'PCMB', label: 'PCMB Mock' },
                     ].map((sub) => (
                       <button
                         key={sub.id}

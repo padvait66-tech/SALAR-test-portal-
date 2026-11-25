@@ -193,13 +193,14 @@ export function parseRouteFromLocation(): ParsedRoute {
     }
   }
 
-  // 5. Hidden Owner Console access (?owner=1, /owner, #owner)
-  const ownerParam = searchParams.get('owner');
+  // 5. Hidden Owner Console access (?owner=1, /owner, #owner, ?salar=1, /salar, #salar)
+  const ownerParam = searchParams.get('owner') || searchParams.get('salar');
   if (
     ownerParam === '1' ||
     ownerParam === 'true' ||
-    /^\/owner\/?$/i.test(window.location.pathname) ||
-    hashWithoutHydrate.toLowerCase() === 'owner'
+    /^\/(owner|salar)\/?$/i.test(window.location.pathname) ||
+    hashWithoutHydrate.toLowerCase() === 'owner' ||
+    hashWithoutHydrate.toLowerCase() === 'salar'
   ) {
     return { type: 'owner-login', id: '', autoQuickJoin: false };
   }

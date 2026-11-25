@@ -46,8 +46,20 @@ const defaultDbPath = process.env.VERCEL
   : path.resolve(process.cwd(), 'gurukul_portal.db');
 const DB_PATH = process.env.SQLITE_DB_PATH || defaultDbPath;
 export const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
+try {
+  db.pragma('journal_mode = WAL');
+} catch {
+  // Ignore WAL errors on restricted/serverless filesystems
+}
 db.pragma('foreign_keys = ON');
+
+const SEEDED_OWNER_AUTH_HASH =
+  'f97065e18362415b7097ba80e3407f7f:d2f72dda54858a9334585629412dcfb85030ffaaa248f9c1ce0f7609c8a17f4f3d59d23d8facaec6526dd4853de475bc83395c590a6eb498645a89a7e4269d1d';
+
+function getSessionSigningKey(): Buffer {
+  const base = (process.env.SESSION_SECRET || '').trim() || SEEDED_OWNER_AUTH_HASH;
+  return crypto.createHash('sha256').update(base).digest();
+}
 
 export function hashSecret(secret: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -88,6 +100,10 @@ export function initDatabase(): void {
       subject_id TEXT NOT NULL,
       email TEXT NOT NULL,
       expires_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS revoked_sessions (
+      token_hash TEXT PRIMARY KEY,
+      revoked_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS batches (
       id TEXT PRIMARY KEY,
@@ -320,15 +336,38 @@ export function initDatabase(): void {
     tx();
   }
 
+  const pcmbApplied = db
+    .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+    .get('seed_pcm_pcmb_tests_v2');
+  if (!pcmbApplied) {
+    const tx = db.transaction(() => {
+      const qStmt = db.prepare(
+        'INSERT OR IGNORE INTO questions (id, sort_order, data) VALUES (?, ?, ?)'
+      );
+      SUBJECT_PCM_QUESTIONS.forEach((q, idx) => {
+        qStmt.run(q.id, -20 - idx, JSON.stringify(q));
+      });
+      const eStmt = db.prepare(
+        'INSERT OR IGNORE INTO exams (id, sort_order, data) VALUES (?, ?, ?)'
+      );
+      SUBJECT_PCM_EXAMS.forEach((ex, idx) => {
+        eStmt.run(ex.id, -20 - idx, JSON.stringify(ex));
+      });
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(
+        'seed_pcm_pcmb_tests_v2',
+        new Date().toISOString()
+      );
+    });
+    tx();
+  }
+
   // Seed SALAR Tech platform owner account (salted scrypt hash, never plaintext password)
   const existingOwner = db.prepare('SELECT id FROM owner_auth WHERE id = 1').get();
   if (!existingOwner) {
     const ownerUsername = (process.env.OWNER_USERNAME || 'SALAR Tech').trim();
     const envOwnerPass = (process.env.OWNER_PASSWORD || '').trim();
     const passwordHash =
-      envOwnerPass.length >= 4
-        ? hashSecret(envOwnerPass)
-        : 'f97065e18362415b7097ba80e3407f7f:d2f72dda54858a9334585629412dcfb85030ffaaa248f9c1ce0f7609c8a17f4f3d59d23d8facaec6526dd4853de475bc83395c590a6eb498645a89a7e4269d1d';
+      envOwnerPass.length >= 4 ? hashSecret(envOwnerPass) : SEEDED_OWNER_AUTH_HASH;
     db.prepare(
       'INSERT INTO owner_auth (id, username, password_hash, updated_at) VALUES (1, ?, ?, ?)'
     ).run(ownerUsername, passwordHash, new Date().toISOString());
@@ -393,6 +432,7 @@ export function initDatabase(): void {
       status: 'Active',
       issuedAt: '2026-01-01',
       expiresAt: '2027-12-31',
+      supportContact: '+91 98230 11223 · support@salartech.in',
       isPrimaryPortal: true,
       notes: 'Primary licensed client portal managed by SALAR Tech.',
     },
@@ -410,6 +450,7 @@ export function initDatabase(): void {
       status: 'Active',
       issuedAt: '2026-02-15',
       expiresAt: '2027-02-14',
+      supportContact: '+91 98230 11223 · support@salartech.in',
       isPrimaryPortal: false,
       notes: 'Pune + Nashik campus license.',
     },
@@ -425,13 +466,56 @@ export function initDatabase(): void {
       billingCycle: 'Monthly',
       maxStudents: 150,
       status: 'Trial',
-      issuedAt: '2026-11-01',
-      expiresAt: '2026-12-01',
+      issuedAt: '2026-02-02',
+      expiresAt: '2026-03-03',
+      trialStartDate: '2026-02-02',
+      trialEndDate: '2026-03-03',
+      supportContact: '+91 98230 11223 · support@salartech.in',
       isPrimaryPortal: false,
-      notes: '30-day evaluation license.',
+      notes: 'Trial period: 02-02-2026 to 03-03-2026',
     },
   ];
   seedTable<ClientLicense>('client_licenses', initialClients);
+
+  const trialMigApplied = db
+    .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+    .get('seed_license_trial_dates_v1');
+  if (!trialMigApplied) {
+    const tx = db.transaction(() => {
+      const rows = db.prepare('SELECT id, data FROM client_licenses').all() as {
+        id: string;
+        data: string;
+      }[];
+      rows.forEach((row) => {
+        const parsed = JSON.parse(row.data) as ClientLicense;
+        let changed = false;
+        if (!parsed.supportContact) {
+          parsed.supportContact = '+91 98230 11223 · support@salartech.in';
+          changed = true;
+        }
+        if (row.id === 'lic-sankalp-cet' && !parsed.trialStartDate) {
+          parsed.trialStartDate = '2026-02-02';
+          parsed.trialEndDate = '2026-03-03';
+          parsed.expiresAt = '2026-03-03';
+          if (!parsed.notes || parsed.notes === '30-day evaluation license.') {
+            parsed.notes = 'Trial period: 02-02-2026 to 03-03-2026';
+          }
+          changed = true;
+        }
+        if (changed) {
+          db.prepare('UPDATE client_licenses SET data = ? WHERE id = ?').run(
+            JSON.stringify(parsed),
+            row.id
+          );
+        }
+      });
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(
+        'seed_license_trial_dates_v1',
+        new Date().toISOString()
+      );
+    });
+    tx();
+  }
 }
 
 export function getSettings(): InstituteSettings {
@@ -541,7 +625,9 @@ export function getPublicLicenseSummary(): PublicLicenseSummary {
       price: fallbackPlan?.price ?? 4999,
       billingCycle: fallbackPlan?.billingCycle ?? 'Monthly',
       status: 'Active',
+      issuedAt: '2026-01-01',
       expiresAt: '2027-12-31',
+      supportContact: '+91 98230 11223 · support@salartech.in',
       maxStudents: fallbackPlan?.maxStudents ?? 1000,
       plans,
     };
@@ -555,25 +641,89 @@ export function getPublicLicenseSummary(): PublicLicenseSummary {
     price: primary.customPrice,
     billingCycle: primary.billingCycle,
     status: primary.status,
+    issuedAt: primary.issuedAt,
     expiresAt: primary.expiresAt,
+    trialStartDate: primary.trialStartDate,
+    trialEndDate: primary.trialEndDate,
+    supportContact: primary.supportContact || '+91 98230 11223 · support@salartech.in',
+    notes: primary.notes,
     maxStudents: primary.maxStudents,
     plans,
   };
 }
 
 export function createSession(role: UserRole, subjectId: string, email: string): string {
-  const rawToken = crypto.randomBytes(32).toString('hex');
   const expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 7; // 7 days
-  db.prepare(
-    'INSERT INTO sessions (token_hash, role, subject_id, email, expires_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(hashToken(rawToken), role, subjectId, email, expiresAt);
-  return rawToken;
+  const payload = {
+    role,
+    subjectId,
+    email,
+    exp: expiresAt,
+    jti: crypto.randomBytes(12).toString('hex'),
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const sigB64 = crypto
+    .createHmac('sha256', getSessionSigningKey())
+    .update(payloadB64)
+    .digest('base64url');
+  const signedToken = `st1.${payloadB64}.${sigB64}`;
+
+  try {
+    db.prepare(
+      'INSERT OR REPLACE INTO sessions (token_hash, role, subject_id, email, expires_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(hashToken(signedToken), role, subjectId, email, expiresAt);
+  } catch {
+    // Signed token remains verifiable even if ephemeral storage is constrained
+  }
+  return signedToken;
 }
 
 export function getSession(
   rawToken: string
 ): { role: UserRole; subjectId: string; email: string } | null {
   if (!rawToken) return null;
+
+  // Check explicit revocation first
+  try {
+    const revoked = db
+      .prepare('SELECT 1 FROM revoked_sessions WHERE token_hash = ?')
+      .get(hashToken(rawToken));
+    if (revoked) return null;
+  } catch {
+    // Ignore DB check issues
+  }
+
+  // Stateless HMAC-signed token verification (survives serverless multi-container cold starts)
+  if (rawToken.startsWith('st1.')) {
+    const parts = rawToken.split('.');
+    if (parts.length === 3) {
+      const [, payloadB64, sigB64] = parts;
+      if (payloadB64 && sigB64) {
+        const expectedSig = crypto
+          .createHmac('sha256', getSessionSigningKey())
+          .update(payloadB64)
+          .digest();
+        const actualSig = Buffer.from(sigB64, 'base64url');
+        if (
+          expectedSig.length === actualSig.length &&
+          crypto.timingSafeEqual(expectedSig, actualSig)
+        ) {
+          try {
+            const decoded = JSON.parse(
+              Buffer.from(payloadB64, 'base64url').toString('utf8')
+            ) as { role: UserRole; subjectId: string; email: string; exp: number };
+            if (decoded && decoded.exp >= Date.now() && decoded.role && decoded.subjectId) {
+              return { role: decoded.role, subjectId: decoded.subjectId, email: decoded.email };
+            }
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   const row = db
     .prepare('SELECT role, subject_id, email, expires_at FROM sessions WHERE token_hash = ?')
     .get(hashToken(rawToken)) as
@@ -589,5 +739,14 @@ export function getSession(
 
 export function deleteSession(rawToken: string): void {
   if (!rawToken) return;
-  db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(rawToken));
+  const h = hashToken(rawToken);
+  try {
+    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(h);
+    db.prepare('INSERT OR REPLACE INTO revoked_sessions (token_hash, revoked_at) VALUES (?, ?)').run(
+      h,
+      Date.now()
+    );
+  } catch {
+    // Ignore cleanup errors
+  }
 }
