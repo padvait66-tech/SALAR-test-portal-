@@ -49,7 +49,9 @@ interface SharedExamState {
 }
 
 export default function App() {
-  const [view, setView] = useState<AppView>('landing');
+  const [view, setView] = useState<AppView>(() =>
+    parseRouteFromLocation().type === 'owner-login' ? 'owner-login' : 'landing'
+  );
   const [returnRole, setReturnRole] = useState<'student' | 'admin'>('student');
   const [sessionRole, setSessionRole] = useState<'none' | 'student' | 'admin' | 'owner'>('none');
 
@@ -189,20 +191,22 @@ export default function App() {
       } else if (parsed.type === 'exam') {
         await openSharedExamById(parsed.id, parsed.autoQuickJoin, parsed.hydrateToken);
       } else if (parsed.type === 'owner-login') {
-        setView('owner-login');
+        setView((prev) => (prev === 'owner' ? 'owner' : 'owner-login'));
       }
     }
 
     async function init() {
       const immediateRoute = parseRouteFromLocation();
       if (immediateRoute.type === 'owner-login') {
-        setView('owner-login');
+        setView((prev) => (prev === 'owner' ? 'owner' : 'owner-login'));
       }
       try {
         const boot = await api.getPublicBootstrap();
         if (!active) return;
         setPublicData(boot);
-        await handleCurrentRoute();
+        if (immediateRoute.type !== 'owner-login') {
+          await handleCurrentRoute();
+        }
       } catch (err) {
         if (active) {
           setBootError(err instanceof Error ? err.message : 'Unable to reach portal server.');
@@ -258,9 +262,13 @@ export default function App() {
     setView('admin');
   };
 
-  const handleAuthenticatedOwner = async () => {
+  const handleAuthenticatedOwner = async (preloadedWorkspace?: OwnerWorkspaceResponse) => {
     setSessionRole('owner');
-    await refreshOwnerWorkspace();
+    if (preloadedWorkspace) {
+      setOwnerWorkspace(preloadedWorkspace);
+    } else {
+      await refreshOwnerWorkspace();
+    }
     setView('owner');
   };
 
@@ -425,7 +433,7 @@ export default function App() {
     );
   };
 
-  if (bootLoading) {
+  if (bootLoading && view !== 'owner-login' && view !== 'owner') {
     return (
       <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-6">
         <div className="bg-white border border-slate-200 rounded-md px-6 py-5 text-center space-y-2">
@@ -550,12 +558,67 @@ export default function App() {
         <OwnerPortalView
           workspace={ownerWorkspace}
           onRefresh={async () => {
-            await refreshOwnerWorkspace();
-            await refreshPublic();
+            await Promise.all([refreshOwnerWorkspace(), refreshPublic()]);
+          }}
+          onPatchWorkspace={(updater) => {
+            setOwnerWorkspace((prev) => {
+              if (!prev) return prev;
+              const next = updater(prev);
+              const primary = next.clients.find((c) => c.isPrimaryPortal) ?? next.clients[0];
+              const op = next.ownerProfile;
+              const derivedLicense = primary
+                ? {
+                    licensedTo: primary.clientName,
+                    licensor: op.companyName,
+                    madeByText: op.footerTagline || `Made by ${op.companyName}`,
+                    licenseKey: primary.licenseKey,
+                    planName: primary.planName,
+                    price: primary.customPrice,
+                    billingCycle: primary.billingCycle,
+                    status: primary.status,
+                    issuedAt: primary.issuedAt,
+                    expiresAt: primary.expiresAt,
+                    trialStartDate: primary.trialStartDate,
+                    trialEndDate: primary.trialEndDate,
+                    supportContact:
+                      primary.supportContact ||
+                      `${op.contactPhone}${op.email ? ` · ${op.email}` : ''}`,
+                    ownerContactPhone: op.contactPhone,
+                    ownerWhatsapp: op.whatsappNumber,
+                    ownerEmail: op.email,
+                    notes: primary.notes,
+                    maxStudents: primary.maxStudents,
+                    paymentGateway: {
+                      provider: op.paymentGatewayProvider,
+                      upiId: op.upiId,
+                      paymentLink: op.gatewayPaymentLink,
+                      keyId: op.gatewayKeyId,
+                      bankName: op.bankName,
+                      accountHolder: op.accountHolder,
+                      accountNo: op.accountNo,
+                      ifsc: op.ifsc,
+                    },
+                    portalControls: op.clientPortalControls,
+                    plans: next.plans,
+                  }
+                : undefined;
+
+              const liveExams = next.portalExams.filter((ex) => ex.status === 'Live');
+              setPublicData((pub) => ({
+                ...pub,
+                settings: next.portalSettings,
+                liveExams,
+                license: derivedLicense ?? pub.license,
+                stats: {
+                  ...pub.stats,
+                  examCount: liveExams.length,
+                },
+              }));
+              return next;
+            });
           }}
           onOpenClientPortal={() => {
             window.history.replaceState(null, '', '/');
-            void refreshPublic();
             setView('landing');
           }}
           onOpenAdminConsole={async () => {

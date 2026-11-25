@@ -50,10 +50,15 @@ const DB_PATH = process.env.SQLITE_DB_PATH || defaultDbPath;
 export const db = new Database(DB_PATH);
 try {
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('temp_store = MEMORY');
+  db.pragma('cache_size = -16000');
 } catch {
-  // Ignore WAL errors on restricted/serverless filesystems
+  // Ignore pragma errors on restricted/serverless filesystems
 }
 db.pragma('foreign_keys = ON');
+
+let revokedSessionsKnownEmpty: boolean | null = null;
 
 const SEEDED_OWNER_AUTH_HASH =
   '1939d7bc004c3d2e7eaa6275be1d6576:29b9f9b2beed2a1d95b2e43a1220e5e403720ea821846bd8b141c660de1338e574fb376ab0ba2869d21ce1f4ba1cf93195c375e4bc9c56e22c81730e023a4271';
@@ -80,11 +85,32 @@ export function verifySecret(secret: string, storedHash: string): boolean {
   return crypto.timingSafeEqual(expected, actual);
 }
 
+export function verifySecretAsync(secret: string, storedHash: string): Promise<boolean> {
+  const parts = storedHash.split(':');
+  if (parts.length !== 2) return Promise.resolve(false);
+  const [salt, hexHash] = parts;
+  if (!salt || !hexHash) return Promise.resolve(false);
+  const expected = Buffer.from(hexHash, 'hex');
+  return new Promise((resolve) => {
+    crypto.scrypt(secret, salt, 64, (err, actual) => {
+      if (err || expected.length !== actual.length) {
+        resolve(false);
+        return;
+      }
+      resolve(crypto.timingSafeEqual(expected, actual));
+    });
+  });
+}
+
 export function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+let dbInitialized = false;
+
 export function initDatabase(): void {
+  if (dbInitialized) return;
+  dbInitialized = true;
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       id TEXT PRIMARY KEY,
@@ -640,10 +666,17 @@ export function listOrdered<T>(table: string): T[] {
   return rows.map((r) => JSON.parse(r.data) as T);
 }
 
-export function listStudents(): StudentRecord[] {
-  const rows = db
-    .prepare('SELECT data FROM students ORDER BY sort_order ASC, rowid DESC')
-    .all() as { data: string }[];
+export function countTableRows(table: string): number {
+  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM ${table}`).get() as { cnt: number };
+  return row?.cnt ?? 0;
+}
+
+export function listStudents(limit?: number): StudentRecord[] {
+  const sql =
+    typeof limit === 'number' && limit > 0
+      ? `SELECT data FROM students ORDER BY sort_order ASC, rowid DESC LIMIT ${Math.floor(limit)}`
+      : 'SELECT data FROM students ORDER BY sort_order ASC, rowid DESC';
+  const rows = db.prepare(sql).all() as { data: string }[];
   return rows.map((r) => JSON.parse(r.data) as StudentRecord);
 }
 
@@ -661,10 +694,12 @@ export function listAttendance(): AttendanceRecord[] {
   return rows.map((r) => JSON.parse(r.data) as AttendanceRecord);
 }
 
-export function listPayments(): PaymentRecord[] {
-  const rows = db
-    .prepare('SELECT data FROM payments ORDER BY submitted_at DESC, rowid DESC')
-    .all() as { data: string }[];
+export function listPayments(limit?: number): PaymentRecord[] {
+  const sql =
+    typeof limit === 'number' && limit > 0
+      ? `SELECT data FROM payments ORDER BY submitted_at DESC, rowid DESC LIMIT ${Math.floor(limit)}`
+      : 'SELECT data FROM payments ORDER BY submitted_at DESC, rowid DESC';
+  const rows = db.prepare(sql).all() as { data: string }[];
   return rows.map((r) => JSON.parse(r.data) as PaymentRecord);
 }
 
@@ -837,12 +872,18 @@ export function getSession(
 ): { role: UserRole; subjectId: string; email: string } | null {
   if (!rawToken) return null;
 
-  // Check explicit revocation first
+  // Check explicit revocation only when table is non-empty
   try {
-    const revoked = db
-      .prepare('SELECT 1 FROM revoked_sessions WHERE token_hash = ?')
-      .get(hashToken(rawToken));
-    if (revoked) return null;
+    if (revokedSessionsKnownEmpty === null) {
+      const cnt = db.prepare('SELECT 1 FROM revoked_sessions LIMIT 1').get();
+      revokedSessionsKnownEmpty = !cnt;
+    }
+    if (!revokedSessionsKnownEmpty) {
+      const revoked = db
+        .prepare('SELECT 1 FROM revoked_sessions WHERE token_hash = ?')
+        .get(hashToken(rawToken));
+      if (revoked) return null;
+    }
   } catch {
     // Ignore DB check issues
   }
@@ -900,6 +941,7 @@ export function deleteSession(rawToken: string): void {
       h,
       Date.now()
     );
+    revokedSessionsKnownEmpty = false;
   } catch {
     // Ignore cleanup errors
   }

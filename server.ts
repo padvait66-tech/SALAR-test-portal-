@@ -25,6 +25,7 @@ import type {
 } from './src/types/portal.ts';
 import { INITIAL_PAYMENTS } from './src/data/seedPortalData.ts';
 import {
+  countTableRows,
   createSession,
   db,
   deleteById,
@@ -48,6 +49,7 @@ import {
   updateOwnerPassword,
   updateRowData,
   verifySecret,
+  verifySecretAsync,
 } from './server/db.ts';
 
 initDatabase();
@@ -139,7 +141,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// Public bootstrap (safe public data only)
+// Public bootstrap (safe public data only — uses COUNT(*) instead of loading all question blobs)
 app.get('/api/public/bootstrap', (_req: Request, res: Response) => {
   const settings = getSettings();
   const courses = listOrdered<CoursePackage>('courses').filter((c) => c.status === 'LIVE');
@@ -149,7 +151,7 @@ app.get('/api/public/bootstrap', (_req: Request, res: Response) => {
   const batches = listOrdered<BatchRecord>('batches').filter((b) => b.status === 'Active');
   const folders = listOrdered<TestFolder>('folders');
   const exams = listOrdered<ExamPaper>('exams').filter((e) => e.status === 'Live');
-  const questions = listOrdered<QuestionItem>('questions');
+  const questionCount = countTableRows('questions');
   res.json({
     settings,
     courses,
@@ -160,7 +162,7 @@ app.get('/api/public/bootstrap', (_req: Request, res: Response) => {
     license: getPublicLicenseSummary(),
     stats: {
       examCount: exams.length,
-      questionCount: questions.length,
+      questionCount,
     },
   });
 });
@@ -1496,7 +1498,39 @@ app.delete('/api/admin/test-series/:id', requireAdmin, (req: AuthedRequest, res:
 
 // ======================== OWNER (SALAR TECH) HIDDEN LICENSING ROUTES ========================
 
-app.post('/api/auth/owner/login', (req: Request, res: Response) => {
+function buildOwnerWorkspacePayload() {
+  const stored = getOwnerAuth();
+  const plans = listOrdered<LicensePlan>('license_plans');
+  const clients = listOrdered<ClientLicense>('client_licenses');
+  const ownerProfile = getOwnerProfile();
+  const licensePayments = listLicensePayments();
+  const portalSettings = getSettings();
+  const adminRow = db.prepare('SELECT email FROM admin_auth WHERE id = 1').get() as
+    | { email: string }
+    | undefined;
+  const studentsCount = countTableRows('students');
+  const exams = listOrdered<ExamPaper>('exams');
+  const portalStudents = listStudents(25);
+  const portalPayments = listPayments(25);
+  return {
+    ownerUsername: stored?.username || 'Advait',
+    ownerProfile,
+    plans,
+    clients,
+    licensePayments,
+    portalSettings,
+    adminEmail: adminRow?.email || portalSettings.email,
+    portalExams: exams,
+    portalStudents,
+    portalPayments,
+    portalStats: {
+      studentsCount,
+      examsCount: exams.length,
+    },
+  };
+}
+
+app.post('/api/auth/owner/login', async (req: Request, res: Response) => {
   const body = req.body as { username?: string; password?: string };
   const inputUser = String(body.username || '').trim();
   const rawPass = String(body.password || '');
@@ -1514,16 +1548,25 @@ app.post('/api/auth/owner/login', (req: Request, res: Response) => {
   }
 
   const userOk = normalizeUser(inputUser) === normalizeUser(stored.username);
+  if (!userOk) {
+    res.status(401).json({ error: 'Invalid owner credentials.' });
+    return;
+  }
   const passOk =
-    verifySecret(inputPass, stored.passwordHash) ||
-    (rawPass !== inputPass && verifySecret(rawPass, stored.passwordHash));
-  if (!userOk || !passOk) {
+    (await verifySecretAsync(inputPass, stored.passwordHash)) ||
+    (rawPass !== inputPass && (await verifySecretAsync(rawPass, stored.passwordHash)));
+  if (!passOk) {
     res.status(401).json({ error: 'Invalid owner credentials.' });
     return;
   }
 
   const token = createSession('owner', 'owner-1', stored.username);
-  res.json({ token, role: 'owner', username: stored.username });
+  res.json({
+    token,
+    role: 'owner',
+    username: stored.username,
+    workspace: buildOwnerWorkspacePayload(),
+  });
 });
 
 app.post('/api/public/license-payment', (req: Request, res: Response) => {
@@ -1567,34 +1610,7 @@ app.post('/api/public/license-payment', (req: Request, res: Response) => {
 });
 
 app.get('/api/owner/workspace', requireOwner, (_req: AuthedRequest, res: Response) => {
-  const stored = getOwnerAuth();
-  const plans = listOrdered<LicensePlan>('license_plans');
-  const clients = listOrdered<ClientLicense>('client_licenses');
-  const ownerProfile = getOwnerProfile();
-  const licensePayments = listLicensePayments();
-  const portalSettings = getSettings();
-  const adminRow = db.prepare('SELECT email FROM admin_auth WHERE id = 1').get() as
-    | { email: string }
-    | undefined;
-  const students = listStudents();
-  const exams = listOrdered<ExamPaper>('exams');
-  const payments = listPayments();
-  res.json({
-    ownerUsername: stored?.username || 'Advait',
-    ownerProfile,
-    plans,
-    clients,
-    licensePayments,
-    portalSettings,
-    adminEmail: adminRow?.email || portalSettings.email,
-    portalExams: exams,
-    portalStudents: students.slice(0, 25),
-    portalPayments: payments.slice(0, 25),
-    portalStats: {
-      studentsCount: students.length,
-      examsCount: exams.length,
-    },
-  });
+  res.json(buildOwnerWorkspacePayload());
 });
 
 app.post('/api/owner/plans', requireOwner, (req: AuthedRequest, res: Response) => {
@@ -1873,17 +1889,19 @@ app.post('/api/owner/license-payments', requireOwner, (req: AuthedRequest, res: 
     'INSERT INTO license_payments (id, client_id, submitted_at, data) VALUES (?, ?, ?, ?)'
   ).run(record.id, record.clientId, record.submittedAt, JSON.stringify(record));
 
+  let updatedClient: ClientLicense | null = null;
   if (status === 'Verified' && body.activateClient !== false) {
     const baseMs = Math.max(Date.now(), new Date(client.expiresAt).getTime() || Date.now());
     const days = client.billingCycle === 'Yearly' ? 365 : client.billingCycle === 'Quarterly' ? 90 : 30;
     const nextExpiry = new Date(baseMs + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    updateRowData('client_licenses', {
+    updatedClient = {
       ...client,
       status: 'Active',
       expiresAt: nextExpiry,
-    });
+    };
+    updateRowData('client_licenses', updatedClient);
   }
-  res.status(201).json({ payment: record });
+  res.status(201).json({ payment: record, client: updatedClient });
 });
 
 app.patch('/api/owner/license-payments/:id/status', requireOwner, (req: AuthedRequest, res: Response) => {
@@ -1906,6 +1924,7 @@ app.patch('/api/owner/license-payments/:id/status', requireOwner, (req: AuthedRe
   };
   db.prepare('UPDATE license_payments SET data = ? WHERE id = ?').run(JSON.stringify(updated), id);
 
+  let updatedClient: ClientLicense | null = null;
   if (nextStatus === 'Verified' && body.activateClient !== false) {
     const clients = listOrdered<ClientLicense>('client_licenses');
     const client = clients.find((c) => c.id === existing.clientId);
@@ -1913,14 +1932,15 @@ app.patch('/api/owner/license-payments/:id/status', requireOwner, (req: AuthedRe
       const baseMs = Math.max(Date.now(), new Date(client.expiresAt).getTime() || Date.now());
       const days = client.billingCycle === 'Yearly' ? 365 : client.billingCycle === 'Quarterly' ? 90 : 30;
       const nextExpiry = new Date(baseMs + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      updateRowData('client_licenses', {
+      updatedClient = {
         ...client,
         status: 'Active',
         expiresAt: nextExpiry,
-      });
+      };
+      updateRowData('client_licenses', updatedClient);
     }
   }
-  res.json({ payment: updated });
+  res.json({ payment: updated, client: updatedClient });
 });
 
 app.delete('/api/owner/license-payments/:id', requireOwner, (req: AuthedRequest, res: Response) => {

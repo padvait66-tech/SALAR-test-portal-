@@ -45,7 +45,7 @@ import {
 interface OwnerLoginViewProps {
   settings: InstituteSettings;
   onBackToPortal: () => void;
-  onAuthenticatedOwner: () => Promise<void> | void;
+  onAuthenticatedOwner: (workspace?: OwnerWorkspaceResponse) => Promise<void> | void;
 }
 
 export function OwnerLoginView({
@@ -65,7 +65,7 @@ export function OwnerLoginView({
     try {
       const res = await api.loginOwner(username.trim(), password);
       setAuthToken(res.token);
-      await onAuthenticatedOwner();
+      await onAuthenticatedOwner(res.workspace);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid owner credentials.');
     } finally {
@@ -171,6 +171,7 @@ export function OwnerLoginView({
 interface OwnerPortalViewProps {
   workspace: OwnerWorkspaceResponse;
   onRefresh: () => Promise<void>;
+  onPatchWorkspace: (updater: (prev: OwnerWorkspaceResponse) => OwnerWorkspaceResponse) => void;
   onOpenClientPortal: () => void;
   onOpenAdminConsole: () => Promise<void>;
   onOpenStudentPortal: () => Promise<void>;
@@ -211,6 +212,7 @@ function getStatusBadgeClass(status: ClientLicenseStatus): string {
 export function OwnerPortalView({
   workspace,
   onRefresh,
+  onPatchWorkspace,
   onOpenClientPortal,
   onOpenAdminConsole,
   onOpenStudentPortal,
@@ -332,7 +334,7 @@ export function OwnerPortalView({
     setErrorBanner('');
     try {
       const matchedPlan = workspace.plans.find((p) => p.id === newClientPlanId);
-      await api.createClientLicense({
+      const { client } = await api.createClientLicense({
         clientName: newClientName.trim(),
         instituteEmail: newClientEmail.trim(),
         contactPhone: newClientPhone.trim(),
@@ -349,7 +351,16 @@ export function OwnerPortalView({
         isPrimaryPortal: newClientPrimary,
         notes: newClientNotes.trim(),
       });
-      await onRefresh();
+      onPatchWorkspace((prev) => ({
+        ...prev,
+        clients: [
+          client,
+          ...(client.isPrimaryPortal
+            ? prev.clients.map((c) => ({ ...c, isPrimaryPortal: false }))
+            : prev.clients),
+        ],
+      }));
+      if (!licPayClientId) setLicPayClientId(client.id);
       setAddClientOpen(false);
       setNewClientName('');
       setNewClientEmail('');
@@ -373,12 +384,21 @@ export function OwnerPortalView({
     setBusy(true);
     setErrorBanner('');
     try {
-      await api.updateClientLicense(editingClient.id, {
+      const { client } = await api.updateClientLicense(editingClient.id, {
         ...editingClient,
         trialStartDate: editingClient.trialStartDate || '',
         trialEndDate: editingClient.trialEndDate || '',
       });
-      await onRefresh();
+      onPatchWorkspace((prev) => ({
+        ...prev,
+        clients: prev.clients.map((c) =>
+          c.id === client.id
+            ? client
+            : client.isPrimaryPortal
+            ? { ...c, isPrimaryPortal: false }
+            : c
+        ),
+      }));
       setEditingClient(null);
       notify('Client license terms & owner pricing updated.');
     } catch (err) {
@@ -391,8 +411,11 @@ export function OwnerPortalView({
   const handleQuickStatus = async (client: ClientLicense, status: ClientLicenseStatus) => {
     setBusy(true);
     try {
-      await api.updateClientLicense(client.id, { status });
-      await onRefresh();
+      const { client: updated } = await api.updateClientLicense(client.id, { status });
+      onPatchWorkspace((prev) => ({
+        ...prev,
+        clients: prev.clients.map((c) => (c.id === updated.id ? updated : c)),
+      }));
       notify(`${client.clientName} status updated to ${status}.`);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : 'Unable to update status.');
@@ -406,11 +429,14 @@ export function OwnerPortalView({
     try {
       const baseMs = Math.max(Date.now(), new Date(client.expiresAt).getTime() || Date.now());
       const nextDate = new Date(baseMs + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      await api.updateClientLicense(client.id, {
+      const { client: updated } = await api.updateClientLicense(client.id, {
         expiresAt: nextDate,
         status: client.status === 'Expired' ? 'Active' : client.status,
       });
-      await onRefresh();
+      onPatchWorkspace((prev) => ({
+        ...prev,
+        clients: prev.clients.map((c) => (c.id === updated.id ? updated : c)),
+      }));
       notify(`Extended ${client.clientName} validity to ${nextDate}.`);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : 'Unable to extend validity.');
@@ -422,8 +448,15 @@ export function OwnerPortalView({
   const handleSetPrimary = async (client: ClientLicense) => {
     setBusy(true);
     try {
-      await api.updateClientLicense(client.id, { isPrimaryPortal: true });
-      await onRefresh();
+      const { client: updated } = await api.updateClientLicense(client.id, {
+        isPrimaryPortal: true,
+      });
+      onPatchWorkspace((prev) => ({
+        ...prev,
+        clients: prev.clients.map((c) =>
+          c.id === updated.id ? updated : { ...c, isPrimaryPortal: false }
+        ),
+      }));
       notify(`${client.clientName} is now the active license bound to this portal.`);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : 'Unable to bind portal license.');
@@ -461,13 +494,20 @@ export function OwnerPortalView({
         .map((line) => line.trim())
         .filter(Boolean);
       if (editingPlan.id) {
-        await api.updateLicensePlan(editingPlan.id, { ...editingPlan, features });
-        notify(`Updated "${editingPlan.name}" license pricing.`);
+        const { plan } = await api.updateLicensePlan(editingPlan.id, { ...editingPlan, features });
+        onPatchWorkspace((prev) => ({
+          ...prev,
+          plans: prev.plans.map((p) => (p.id === plan.id ? plan : p)),
+        }));
+        notify(`Updated "${plan.name}" license pricing.`);
       } else {
-        await api.createLicensePlan({ ...editingPlan, features });
-        notify(`Created new license tier "${editingPlan.name}".`);
+        const { plan } = await api.createLicensePlan({ ...editingPlan, features });
+        onPatchWorkspace((prev) => ({
+          ...prev,
+          plans: [plan, ...prev.plans],
+        }));
+        notify(`Created new license tier "${plan.name}".`);
       }
-      await onRefresh();
       setEditingPlan(null);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : 'Unable to save license plan.');
@@ -869,7 +909,10 @@ export function OwnerPortalView({
                                 message: `Remove ${c.clientName} (${c.licenseKey}) permanently?`,
                                 onConfirm: async () => {
                                   await api.deleteClientLicense(c.id);
-                                  await onRefresh();
+                                  onPatchWorkspace((prev) => ({
+                                    ...prev,
+                                    clients: prev.clients.filter((item) => item.id !== c.id),
+                                  }));
                                   notify(`Removed client license ${c.clientName}.`);
                                 },
                               })
@@ -955,7 +998,10 @@ export function OwnerPortalView({
                           message: `Delete plan "${plan.name}"? Existing client contracts remain intact.`,
                           onConfirm: async () => {
                             await api.deleteLicensePlan(plan.id);
-                            await onRefresh();
+                            onPatchWorkspace((prev) => ({
+                              ...prev,
+                              plans: prev.plans.filter((p) => p.id !== plan.id),
+                            }));
                             notify(`Deleted license plan "${plan.name}".`);
                           },
                         })
@@ -982,8 +1028,8 @@ export function OwnerPortalView({
                   setBusy(true);
                   setErrorBanner('');
                   try {
-                    await api.updateOwnerProfile(profileDraft);
-                    await onRefresh();
+                    const { ownerProfile } = await api.updateOwnerProfile(profileDraft);
+                    onPatchWorkspace((prev) => ({ ...prev, ownerProfile }));
                     notify('Owner Payment Gateway & Bank settings saved.');
                   } catch (err) {
                     setErrorBanner(
@@ -1139,7 +1185,7 @@ export function OwnerPortalView({
                   setBusy(true);
                   setErrorBanner('');
                   try {
-                    await api.createOwnerLicensePayment({
+                    const { payment, client: updatedClient } = await api.createOwnerLicensePayment({
                       clientId: licPayClientId,
                       amount: Number(licPayAmount) || 0,
                       paymentMode: licPayMode,
@@ -1150,7 +1196,13 @@ export function OwnerPortalView({
                     });
                     setLicPayRef('');
                     setLicPayNotes('');
-                    await onRefresh();
+                    onPatchWorkspace((prev) => ({
+                      ...prev,
+                      licensePayments: [payment, ...prev.licensePayments],
+                      clients: updatedClient
+                        ? prev.clients.map((c) => (c.id === updatedClient.id ? updatedClient : c))
+                        : prev.clients,
+                    }));
                     notify('Client license payment recorded and synced.');
                   } catch (err) {
                     setErrorBanner(
@@ -1321,12 +1373,23 @@ export function OwnerPortalView({
                               onClick={async () => {
                                 setBusy(true);
                                 try {
-                                  await api.updateOwnerLicensePaymentStatus(
-                                    lp.id,
-                                    'Verified',
-                                    true
-                                  );
-                                  await onRefresh();
+                                  const { payment, client: updatedClient } =
+                                    await api.updateOwnerLicensePaymentStatus(
+                                      lp.id,
+                                      'Verified',
+                                      true
+                                    );
+                                  onPatchWorkspace((prev) => ({
+                                    ...prev,
+                                    licensePayments: prev.licensePayments.map((item) =>
+                                      item.id === payment.id ? payment : item
+                                    ),
+                                    clients: updatedClient
+                                      ? prev.clients.map((c) =>
+                                          c.id === updatedClient.id ? updatedClient : c
+                                        )
+                                      : prev.clients,
+                                  }));
                                   notify(
                                     `Verified payment ${lp.referenceId} & activated ${lp.clientName}.`
                                   );
@@ -1352,12 +1415,17 @@ export function OwnerPortalView({
                               onClick={async () => {
                                 setBusy(true);
                                 try {
-                                  await api.updateOwnerLicensePaymentStatus(
+                                  const { payment } = await api.updateOwnerLicensePaymentStatus(
                                     lp.id,
                                     'Rejected',
                                     false
                                   );
-                                  await onRefresh();
+                                  onPatchWorkspace((prev) => ({
+                                    ...prev,
+                                    licensePayments: prev.licensePayments.map((item) =>
+                                      item.id === payment.id ? payment : item
+                                    ),
+                                  }));
                                   notify(`Marked payment ${lp.referenceId} as Rejected.`);
                                 } finally {
                                   setBusy(false);
@@ -1375,7 +1443,12 @@ export function OwnerPortalView({
                               setBusy(true);
                               try {
                                 await api.deleteOwnerLicensePayment(lp.id);
-                                await onRefresh();
+                                onPatchWorkspace((prev) => ({
+                                  ...prev,
+                                  licensePayments: prev.licensePayments.filter(
+                                    (item) => item.id !== lp.id
+                                  ),
+                                }));
                                 notify('Payment entry removed.');
                               } finally {
                                 setBusy(false);
@@ -1469,8 +1542,8 @@ export function OwnerPortalView({
                   setBusy(true);
                   setErrorBanner('');
                   try {
-                    await api.updateOwnerProfile(profileDraft);
-                    await onRefresh();
+                    const { ownerProfile } = await api.updateOwnerProfile(profileDraft);
+                    onPatchWorkspace((prev) => ({ ...prev, ownerProfile }));
                     notify('Client portal feature switches & maintenance controls updated.');
                   } catch (err) {
                     setErrorBanner(
@@ -1618,8 +1691,8 @@ export function OwnerPortalView({
                     setBusy(true);
                     setErrorBanner('');
                     try {
-                      await api.ownerUpdateClientSettings(portalSettingsDraft);
-                      await onRefresh();
+                      const { settings } = await api.ownerUpdateClientSettings(portalSettingsDraft);
+                      onPatchWorkspace((prev) => ({ ...prev, portalSettings: settings }));
                       notify('Client Institute Settings updated.');
                     } catch (err) {
                       setErrorBanner(
@@ -1737,7 +1810,7 @@ export function OwnerPortalView({
                         resetAdminEmail
                       );
                       setResetAdminPasscode('');
-                      await onRefresh();
+                      onPatchWorkspace((prev) => ({ ...prev, adminEmail: res.email }));
                       notify(`Client Admin passcode reset for ${res.email}.`);
                     } catch (err) {
                       setErrorBanner(
@@ -1838,11 +1911,14 @@ export function OwnerPortalView({
                           onClick={async () => {
                             setBusy(true);
                             try {
-                              await api.ownerToggleClientExam(ex.id);
-                              await onRefresh();
-                              notify(
-                                `${ex.title} switched to ${ex.status === 'Live' ? 'Draft' : 'Live'}.`
-                              );
+                              const { exam } = await api.ownerToggleClientExam(ex.id);
+                              onPatchWorkspace((prev) => ({
+                                ...prev,
+                                portalExams: prev.portalExams.map((item) =>
+                                  item.id === exam.id ? exam : item
+                                ),
+                              }));
+                              notify(`${exam.title} switched to ${exam.status}.`);
                             } finally {
                               setBusy(false);
                             }
@@ -1869,8 +1945,8 @@ export function OwnerPortalView({
                 setBusy(true);
                 setErrorBanner('');
                 try {
-                  await api.updateOwnerProfile(profileDraft);
-                  await onRefresh();
+                  const { ownerProfile } = await api.updateOwnerProfile(profileDraft);
+                  onPatchWorkspace((prev) => ({ ...prev, ownerProfile }));
                   notify('SALAR Tech owner profile, contact number, email & branding saved.');
                 } catch (err) {
                   setErrorBanner(
@@ -2034,7 +2110,10 @@ export function OwnerPortalView({
                     await api.changeOwnerPassword(currentPassword, newPassword, newUsername);
                     setCurrentPassword('');
                     setNewPassword('');
-                    await onRefresh();
+                    onPatchWorkspace((prev) => ({
+                      ...prev,
+                      ownerUsername: newUsername.trim() || prev.ownerUsername,
+                    }));
                     setPassStatus('Owner credentials updated successfully.');
                   } catch (err) {
                     setPassStatus(

@@ -436,7 +436,12 @@ export const api = {
 
   // Owner (SALAR Tech) hidden licensing endpoints
   loginOwner: (username: string, password: string) =>
-    apiFetch<{ token: string; role: 'owner'; username: string }>('/api/auth/owner/login', {
+    apiFetch<{
+      token: string;
+      role: 'owner';
+      username: string;
+      workspace?: OwnerWorkspaceResponse;
+    }>('/api/auth/owner/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
@@ -505,17 +510,20 @@ export const api = {
   createOwnerLicensePayment: (
     payload: Partial<LicensePaymentRecord> & { activateClient?: boolean }
   ) =>
-    apiFetch<{ payment: LicensePaymentRecord }>('/api/owner/license-payments', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+    apiFetch<{ payment: LicensePaymentRecord; client?: ClientLicense | null }>(
+      '/api/owner/license-payments',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
 
   updateOwnerLicensePaymentStatus: (
     id: string,
     status: LicensePaymentRecord['status'],
     activateClient = true
   ) =>
-    apiFetch<{ payment: LicensePaymentRecord }>(
+    apiFetch<{ payment: LicensePaymentRecord; client?: ClientLicense | null }>(
       `/api/owner/license-payments/${encodeURIComponent(id)}/status`,
       {
         method: 'PATCH',
