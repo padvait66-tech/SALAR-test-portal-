@@ -54,7 +54,7 @@ try {
 db.pragma('foreign_keys = ON');
 
 const SEEDED_OWNER_AUTH_HASH =
-  'f97065e18362415b7097ba80e3407f7f:d2f72dda54858a9334585629412dcfb85030ffaaa248f9c1ce0f7609c8a17f4f3d59d23d8facaec6526dd4853de475bc83395c590a6eb498645a89a7e4269d1d';
+  '1939d7bc004c3d2e7eaa6275be1d6576:29b9f9b2beed2a1d95b2e43a1220e5e403720ea821846bd8b141c660de1338e574fb376ab0ba2869d21ce1f4ba1cf93195c375e4bc9c56e22c81730e023a4271';
 
 function getSessionSigningKey(): Buffer {
   const base = (process.env.SESSION_SECRET || '').trim() || SEEDED_OWNER_AUTH_HASH;
@@ -361,16 +361,25 @@ export function initDatabase(): void {
     tx();
   }
 
-  // Seed SALAR Tech platform owner account (salted scrypt hash, never plaintext password)
+  // Seed platform owner account (salted scrypt hash, never plaintext password)
   const existingOwner = db.prepare('SELECT id FROM owner_auth WHERE id = 1').get();
   if (!existingOwner) {
-    const ownerUsername = (process.env.OWNER_USERNAME || 'SALAR Tech').trim();
-    const envOwnerPass = (process.env.OWNER_PASSWORD || '').trim();
-    const passwordHash =
-      envOwnerPass.length >= 4 ? hashSecret(envOwnerPass) : SEEDED_OWNER_AUTH_HASH;
     db.prepare(
       'INSERT INTO owner_auth (id, username, password_hash, updated_at) VALUES (1, ?, ?, ?)'
-    ).run(ownerUsername, passwordHash, new Date().toISOString());
+    ).run('Advait', SEEDED_OWNER_AUTH_HASH, new Date().toISOString());
+  }
+
+  const advaitOwnerApplied = db
+    .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+    .get('set_owner_advait_v2');
+  if (!advaitOwnerApplied) {
+    db.prepare(
+      'INSERT OR REPLACE INTO owner_auth (id, username, password_hash, updated_at) VALUES (1, ?, ?, ?)'
+    ).run('Advait', SEEDED_OWNER_AUTH_HASH, new Date().toISOString());
+    db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(
+      'set_owner_advait_v2',
+      new Date().toISOString()
+    );
   }
 
   const initialLicensePlans: LicensePlan[] = [
@@ -604,7 +613,7 @@ export function getOwnerAuth(): {
 
 export function updateOwnerPassword(newPassword: string, username?: string): void {
   const current = getOwnerAuth();
-  const nextUsername = (username || current?.username || 'SALAR Tech').trim();
+  const nextUsername = (username || current?.username || 'Advait').trim();
   db.prepare(
     'INSERT OR REPLACE INTO owner_auth (id, username, password_hash, updated_at) VALUES (1, ?, ?, ?)'
   ).run(nextUsername, hashSecret(newPassword), new Date().toISOString());

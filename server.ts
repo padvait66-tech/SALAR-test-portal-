@@ -1474,33 +1474,14 @@ app.delete('/api/admin/test-series/:id', requireAdmin, (req: AuthedRequest, res:
 app.post('/api/auth/owner/login', (req: Request, res: Response) => {
   const body = req.body as { username?: string; password?: string };
   const inputUser = String(body.username || '').trim();
-  const inputPass = String(body.password || '').trim();
+  const rawPass = String(body.password || '');
+  const inputPass = rawPass.trim();
   if (!inputUser || !inputPass) {
     res.status(400).json({ error: 'Username and password are required.' });
     return;
   }
 
   const normalizeUser = (u: string) => u.toLowerCase().replace(/\s+/g, '');
-
-  const envUser = (process.env.OWNER_USERNAME || '').trim();
-  const envPass = (process.env.OWNER_PASSWORD || '').trim();
-
-  if (envPass.length >= 4) {
-    const expectedUser = envUser || 'SALAR Tech';
-    const userOk = normalizeUser(inputUser) === normalizeUser(expectedUser);
-    const passBuf = Buffer.from(inputPass, 'utf8');
-    const expectedBuf = Buffer.from(envPass, 'utf8');
-    const passOk =
-      passBuf.length === expectedBuf.length && crypto.timingSafeEqual(passBuf, expectedBuf);
-    if (!userOk || !passOk) {
-      res.status(401).json({ error: 'Invalid owner credentials.' });
-      return;
-    }
-    const token = createSession('owner', 'owner-1', expectedUser);
-    res.json({ token, role: 'owner', username: expectedUser });
-    return;
-  }
-
   const stored = getOwnerAuth();
   if (!stored) {
     res.status(503).json({ error: 'Owner account not initialized.' });
@@ -1508,7 +1489,9 @@ app.post('/api/auth/owner/login', (req: Request, res: Response) => {
   }
 
   const userOk = normalizeUser(inputUser) === normalizeUser(stored.username);
-  const passOk = verifySecret(inputPass, stored.passwordHash);
+  const passOk =
+    verifySecret(inputPass, stored.passwordHash) ||
+    (rawPass !== inputPass && verifySecret(rawPass, stored.passwordHash));
   if (!userOk || !passOk) {
     res.status(401).json({ error: 'Invalid owner credentials.' });
     return;
@@ -1525,7 +1508,7 @@ app.get('/api/owner/workspace', requireOwner, (_req: AuthedRequest, res: Respons
   const studentsCount = listStudents().length;
   const examsCount = listOrdered<ExamPaper>('exams').length;
   res.json({
-    ownerUsername: process.env.OWNER_USERNAME?.trim() || stored?.username || 'SALAR Tech',
+    ownerUsername: stored?.username || 'Advait',
     plans,
     clients,
     portalStats: {
