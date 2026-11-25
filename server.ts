@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
@@ -12,7 +11,9 @@ import type {
   ExamAttempt,
   ExamPaper,
   InstituteSettings,
+  LicensePaymentRecord,
   LicensePlan,
+  OwnerProfileSettings,
   PaymentRecord,
   QuestionItem,
   StudentRecord,
@@ -29,6 +30,7 @@ import {
   deleteById,
   deleteSession,
   getOwnerAuth,
+  getOwnerProfile,
   getPublicLicenseSummary,
   getSession,
   getSettings,
@@ -37,9 +39,11 @@ import {
   insertAtTop,
   listAttempts,
   listAttendance,
+  listLicensePayments,
   listOrdered,
   listPayments,
   listStudents,
+  saveOwnerProfile,
   saveSettings,
   updateOwnerPassword,
   updateRowData,
@@ -106,8 +110,14 @@ function requireOwner(req: AuthedRequest, res: Response, next: NextFunction): vo
 
 function isPortalLicenseBlocked(): string | null {
   const summary = getPublicLicenseSummary();
+  const support = summary.supportContact || 'support@salartech.in';
+  if (summary.portalControls?.maintenanceMode) {
+    return (
+      summary.portalControls.maintenanceMessage?.trim() ||
+      `Portal is currently in maintenance mode managed by ${summary.licensor}. Contact Support Team (${support}).`
+    );
+  }
   if (summary.status === 'Suspended' || summary.status === 'Expired') {
-    const support = summary.supportContact || 'support@salartech.in';
     return `Your ID (${summary.licenseKey}) is ${summary.status}. Contact ${summary.licensor} Support Team (${support}) for more info.`;
   }
   return null;
@@ -349,6 +359,11 @@ app.post('/api/public/quick-join', (req: Request, res: Response) => {
     res.status(403).json({ error: licenseBlocked });
     return;
   }
+  const ownerProfile = getOwnerProfile();
+  if (!ownerProfile.clientPortalControls.allowQuickJoin) {
+    res.status(403).json({ error: `Quick Join is currently disabled by ${ownerProfile.companyName}.` });
+    return;
+  }
 
   const exams = listOrdered<ExamPaper>('exams');
   const exam = findPublicExam(exams, examId) ?? exams[0];
@@ -584,6 +599,11 @@ app.post('/api/auth/student/signup', (req: Request, res: Response) => {
   const licenseBlocked = isPortalLicenseBlocked();
   if (licenseBlocked) {
     res.status(403).json({ error: licenseBlocked });
+    return;
+  }
+  const ownerProfile = getOwnerProfile();
+  if (!ownerProfile.clientPortalControls.allowStudentSignup) {
+    res.status(403).json({ error: `New student signup is disabled by ${ownerProfile.companyName}.` });
     return;
   }
   const body = req.body as {
@@ -890,6 +910,11 @@ app.post('/api/materials/:id/download', (req: Request, res: Response) => {
 });
 
 app.post('/api/payments', (req: AuthedRequest, res: Response) => {
+  const ownerProfile = getOwnerProfile();
+  if (!ownerProfile.clientPortalControls.allowPayments) {
+    res.status(403).json({ error: `Online payments are currently paused by ${ownerProfile.companyName}.` });
+    return;
+  }
   const body = req.body as {
     itemName?: string;
     itemType?: PaymentRecord['itemType'];
@@ -1501,19 +1526,73 @@ app.post('/api/auth/owner/login', (req: Request, res: Response) => {
   res.json({ token, role: 'owner', username: stored.username });
 });
 
+app.post('/api/public/license-payment', (req: Request, res: Response) => {
+  const body = req.body as {
+    planName?: string;
+    amount?: number;
+    paymentMode?: LicensePaymentRecord['paymentMode'];
+    referenceId?: string;
+    notes?: string;
+    clientName?: string;
+  };
+  const referenceId = String(body.referenceId || '').trim();
+  if (referenceId.length < 4) {
+    res.status(400).json({ error: 'Enter a valid UTR / Transaction Reference ID (min 4 characters).' });
+    return;
+  }
+  const clients = listOrdered<ClientLicense>('client_licenses');
+  const primary = clients.find((c) => c.isPrimaryPortal) ?? clients[0];
+  const record: LicensePaymentRecord = {
+    id: `licpay-${Date.now()}`,
+    clientId: primary?.id ?? 'lic-gurukul-primary',
+    clientName: String(body.clientName || primary?.clientName || getSettings().instituteName).trim(),
+    licenseKey: primary?.licenseKey ?? 'SALAR-GC-2026-PRO',
+    planName: String(body.planName || primary?.planName || 'Pro Institute CBT License').trim(),
+    amount: Math.max(1, Number(body.amount) || primary?.customPrice || 4999),
+    paymentMode:
+      body.paymentMode === 'Payment Gateway' ||
+      body.paymentMode === 'Bank Transfer' ||
+      body.paymentMode === 'Cash / Manual'
+        ? body.paymentMode
+        : 'UPI',
+    referenceId,
+    status: 'Pending',
+    notes: String(body.notes || '').trim(),
+    submittedAt: new Date().toISOString().slice(0, 10),
+  };
+  db.prepare(
+    'INSERT INTO license_payments (id, client_id, submitted_at, data) VALUES (?, ?, ?, ?)'
+  ).run(record.id, record.clientId, record.submittedAt, JSON.stringify(record));
+  res.status(201).json({ payment: record });
+});
+
 app.get('/api/owner/workspace', requireOwner, (_req: AuthedRequest, res: Response) => {
   const stored = getOwnerAuth();
   const plans = listOrdered<LicensePlan>('license_plans');
   const clients = listOrdered<ClientLicense>('client_licenses');
-  const studentsCount = listStudents().length;
-  const examsCount = listOrdered<ExamPaper>('exams').length;
+  const ownerProfile = getOwnerProfile();
+  const licensePayments = listLicensePayments();
+  const portalSettings = getSettings();
+  const adminRow = db.prepare('SELECT email FROM admin_auth WHERE id = 1').get() as
+    | { email: string }
+    | undefined;
+  const students = listStudents();
+  const exams = listOrdered<ExamPaper>('exams');
+  const payments = listPayments();
   res.json({
     ownerUsername: stored?.username || 'Advait',
+    ownerProfile,
     plans,
     clients,
+    licensePayments,
+    portalSettings,
+    adminEmail: adminRow?.email || portalSettings.email,
+    portalExams: exams,
+    portalStudents: students.slice(0, 25),
+    portalPayments: payments.slice(0, 25),
     portalStats: {
-      studentsCount,
-      examsCount,
+      studentsCount: students.length,
+      examsCount: exams.length,
     },
   });
 });
@@ -1724,6 +1803,228 @@ app.post('/api/owner/change-password', requireOwner, (req: AuthedRequest, res: R
   updateOwnerPassword(newPass, body.username);
   res.json({ ok: true });
 });
+
+app.put('/api/owner/profile', requireOwner, (req: AuthedRequest, res: Response) => {
+  const body = req.body as Partial<OwnerProfileSettings>;
+  const current = getOwnerProfile();
+  const next: OwnerProfileSettings = {
+    companyName: String(body.companyName ?? current.companyName).trim() || 'SALAR Tech',
+    ownerName: String(body.ownerName ?? current.ownerName).trim() || 'Advait',
+    contactPhone: String(body.contactPhone ?? current.contactPhone).trim(),
+    whatsappNumber: String(body.whatsappNumber ?? current.whatsappNumber).trim(),
+    email: String(body.email ?? current.email).trim(),
+    address: String(body.address ?? current.address).trim(),
+    gstNumber: String(body.gstNumber ?? current.gstNumber).trim(),
+    footerTagline: String(body.footerTagline ?? current.footerTagline).trim() || 'Made by SALAR Tech',
+    paymentGatewayProvider: body.paymentGatewayProvider || current.paymentGatewayProvider,
+    upiId: String(body.upiId ?? current.upiId).trim(),
+    gatewayKeyId: String(body.gatewayKeyId ?? current.gatewayKeyId).trim(),
+    gatewayPaymentLink: String(body.gatewayPaymentLink ?? current.gatewayPaymentLink).trim(),
+    bankName: String(body.bankName ?? current.bankName).trim(),
+    accountHolder: String(body.accountHolder ?? current.accountHolder).trim(),
+    accountNo: String(body.accountNo ?? current.accountNo).trim(),
+    ifsc: String(body.ifsc ?? current.ifsc).trim(),
+    clientPortalControls: {
+      allowQuickJoin:
+        body.clientPortalControls?.allowQuickJoin ?? current.clientPortalControls.allowQuickJoin,
+      allowStudentSignup:
+        body.clientPortalControls?.allowStudentSignup ??
+        current.clientPortalControls.allowStudentSignup,
+      allowPayments:
+        body.clientPortalControls?.allowPayments ?? current.clientPortalControls.allowPayments,
+      maintenanceMode:
+        body.clientPortalControls?.maintenanceMode ?? current.clientPortalControls.maintenanceMode,
+      maintenanceMessage: String(
+        body.clientPortalControls?.maintenanceMessage ?? current.clientPortalControls.maintenanceMessage
+      ).trim(),
+    },
+  };
+  saveOwnerProfile(next);
+  res.json({ ownerProfile: next });
+});
+
+app.post('/api/owner/license-payments', requireOwner, (req: AuthedRequest, res: Response) => {
+  const body = req.body as Partial<LicensePaymentRecord> & { activateClient?: boolean };
+  const clients = listOrdered<ClientLicense>('client_licenses');
+  const client = clients.find((c) => c.id === body.clientId) ?? clients.find((c) => c.isPrimaryPortal) ?? clients[0];
+  if (!client) {
+    res.status(404).json({ error: 'Client license not found.' });
+    return;
+  }
+  const refId = String(body.referenceId || '').trim() || `INV-${Date.now().toString().slice(-6)}`;
+  const status: LicensePaymentRecord['status'] =
+    body.status === 'Pending' || body.status === 'Rejected' ? body.status : 'Verified';
+  const today = new Date().toISOString().slice(0, 10);
+  const record: LicensePaymentRecord = {
+    id: `licpay-${Date.now()}`,
+    clientId: client.id,
+    clientName: client.clientName,
+    licenseKey: client.licenseKey,
+    planName: String(body.planName || client.planName).trim(),
+    amount: Math.max(0, Number(body.amount ?? client.customPrice) || 0),
+    paymentMode: body.paymentMode || 'UPI',
+    referenceId: refId,
+    status,
+    notes: String(body.notes || '').trim(),
+    submittedAt: today,
+    verifiedAt: status === 'Verified' ? today : undefined,
+  };
+  db.prepare(
+    'INSERT INTO license_payments (id, client_id, submitted_at, data) VALUES (?, ?, ?, ?)'
+  ).run(record.id, record.clientId, record.submittedAt, JSON.stringify(record));
+
+  if (status === 'Verified' && body.activateClient !== false) {
+    const baseMs = Math.max(Date.now(), new Date(client.expiresAt).getTime() || Date.now());
+    const days = client.billingCycle === 'Yearly' ? 365 : client.billingCycle === 'Quarterly' ? 90 : 30;
+    const nextExpiry = new Date(baseMs + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    updateRowData('client_licenses', {
+      ...client,
+      status: 'Active',
+      expiresAt: nextExpiry,
+    });
+  }
+  res.status(201).json({ payment: record });
+});
+
+app.patch('/api/owner/license-payments/:id/status', requireOwner, (req: AuthedRequest, res: Response) => {
+  const id = String(req.params.id || '').trim();
+  const row = db.prepare('SELECT data FROM license_payments WHERE id = ?').get(id) as
+    | { data: string }
+    | undefined;
+  if (!row) {
+    res.status(404).json({ error: 'License payment not found.' });
+    return;
+  }
+  const existing = JSON.parse(row.data) as LicensePaymentRecord;
+  const body = req.body as { status?: LicensePaymentRecord['status']; activateClient?: boolean };
+  const nextStatus: LicensePaymentRecord['status'] =
+    body.status === 'Verified' || body.status === 'Rejected' ? body.status : 'Pending';
+  const updated: LicensePaymentRecord = {
+    ...existing,
+    status: nextStatus,
+    verifiedAt: nextStatus === 'Verified' ? new Date().toISOString().slice(0, 10) : existing.verifiedAt,
+  };
+  db.prepare('UPDATE license_payments SET data = ? WHERE id = ?').run(JSON.stringify(updated), id);
+
+  if (nextStatus === 'Verified' && body.activateClient !== false) {
+    const clients = listOrdered<ClientLicense>('client_licenses');
+    const client = clients.find((c) => c.id === existing.clientId);
+    if (client) {
+      const baseMs = Math.max(Date.now(), new Date(client.expiresAt).getTime() || Date.now());
+      const days = client.billingCycle === 'Yearly' ? 365 : client.billingCycle === 'Quarterly' ? 90 : 30;
+      const nextExpiry = new Date(baseMs + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      updateRowData('client_licenses', {
+        ...client,
+        status: 'Active',
+        expiresAt: nextExpiry,
+      });
+    }
+  }
+  res.json({ payment: updated });
+});
+
+app.delete('/api/owner/license-payments/:id', requireOwner, (req: AuthedRequest, res: Response) => {
+  deleteById('license_payments', String(req.params.id));
+  res.json({ ok: true });
+});
+
+app.put('/api/owner/client-portal/settings', requireOwner, (req: AuthedRequest, res: Response) => {
+  const body = req.body as Partial<InstituteSettings>;
+  const current = getSettings();
+  const next: InstituteSettings = {
+    ...current,
+    instituteName: String(body.instituteName ?? current.instituteName).trim() || current.instituteName,
+    tagline: String(body.tagline ?? current.tagline).trim(),
+    heroTitle: String(body.heroTitle ?? current.heroTitle).trim(),
+    heroSubtitle: String(body.heroSubtitle ?? current.heroSubtitle).trim(),
+    primaryCta: String(body.primaryCta ?? current.primaryCta).trim(),
+    secondaryCta: String(body.secondaryCta ?? current.secondaryCta).trim(),
+    email: String(body.email ?? current.email).trim(),
+    phone: String(body.phone ?? current.phone).trim(),
+    address: String(body.address ?? current.address).trim(),
+    upiId: String(body.upiId ?? current.upiId).trim(),
+    bankName: String(body.bankName ?? current.bankName).trim(),
+    accountNo: String(body.accountNo ?? current.accountNo).trim(),
+    ifsc: String(body.ifsc ?? current.ifsc).trim(),
+  };
+  saveSettings(next);
+  res.json({ settings: next });
+});
+
+app.post(
+  '/api/owner/client-portal/reset-admin-passcode',
+  requireOwner,
+  (req: AuthedRequest, res: Response) => {
+    const body = req.body as { email?: string; newPasscode?: string };
+    const newPass = String(body.newPasscode || '').trim();
+    if (newPass.length < 6) {
+      res.status(400).json({ error: 'Client Admin passcode must be at least 6 characters.' });
+      return;
+    }
+    const settings = getSettings();
+    const adminRow = db.prepare('SELECT email FROM admin_auth WHERE id = 1').get() as
+      | { email: string }
+      | undefined;
+    const targetEmail = String(body.email || adminRow?.email || settings.email)
+      .trim()
+      .toLowerCase();
+    db.prepare(
+      'INSERT OR REPLACE INTO admin_auth (id, email, passcode_hash, updated_at) VALUES (1, ?, ?, ?)'
+    ).run(targetEmail, hashSecret(newPass), new Date().toISOString());
+    res.json({ ok: true, email: targetEmail });
+  }
+);
+
+app.patch(
+  '/api/owner/client-portal/exams/:id/toggle',
+  requireOwner,
+  (req: AuthedRequest, res: Response) => {
+    const id = String(req.params.id || '').trim();
+    const exams = listOrdered<ExamPaper>('exams');
+    const existing = exams.find((e) => e.id === id);
+    if (!existing) {
+      res.status(404).json({ error: 'Exam not found.' });
+      return;
+    }
+    const updated: ExamPaper = {
+      ...existing,
+      status: existing.status === 'Live' ? 'Draft' : 'Live',
+    };
+    updateRowData('exams', updated);
+    res.json({ exam: updated });
+  }
+);
+
+app.post(
+  '/api/owner/client-portal/impersonate-admin',
+  requireOwner,
+  (_req: AuthedRequest, res: Response) => {
+    const settings = getSettings();
+    const adminRow = db.prepare('SELECT email FROM admin_auth WHERE id = 1').get() as
+      | { email: string }
+      | undefined;
+    const email = adminRow?.email || settings.email;
+    const token = createSession('admin', 'admin-1', email);
+    res.json({ token, role: 'admin', email });
+  }
+);
+
+app.post(
+  '/api/owner/client-portal/impersonate-student',
+  requireOwner,
+  (req: AuthedRequest, res: Response) => {
+    const body = req.body as { studentId?: string };
+    const students = listStudents();
+    const student =
+      (body.studentId ? students.find((s) => s.id === body.studentId) : undefined) ?? students[0];
+    if (!student) {
+      res.status(404).json({ error: 'No student record found in client portal.' });
+      return;
+    }
+    const token = createSession('student', student.id, student.email);
+    res.json({ token, role: 'student', student });
+  }
+);
 
 // Unknown API routes return JSON 404
 app.use('/api', (_req: Request, res: Response) => {

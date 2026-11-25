@@ -246,9 +246,61 @@ export interface ClientLicense {
   notes: string;
 }
 
+export interface ClientPortalControls {
+  allowQuickJoin: boolean;
+  allowStudentSignup: boolean;
+  allowPayments: boolean;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+}
+
+export type PaymentGatewayProvider =
+  | 'UPI'
+  | 'Razorpay'
+  | 'Cashfree'
+  | 'PhonePe'
+  | 'Stripe'
+  | 'Bank Transfer';
+
+export interface OwnerProfileSettings {
+  companyName: string;
+  ownerName: string;
+  contactPhone: string;
+  whatsappNumber: string;
+  email: string;
+  address: string;
+  gstNumber: string;
+  footerTagline: string;
+  paymentGatewayProvider: PaymentGatewayProvider;
+  upiId: string;
+  gatewayKeyId: string;
+  gatewayPaymentLink: string;
+  bankName: string;
+  accountHolder: string;
+  accountNo: string;
+  ifsc: string;
+  clientPortalControls: ClientPortalControls;
+}
+
+export interface LicensePaymentRecord {
+  id: string;
+  clientId: string;
+  clientName: string;
+  licenseKey: string;
+  planName: string;
+  amount: number;
+  paymentMode: 'UPI' | 'Payment Gateway' | 'Bank Transfer' | 'Cash / Manual';
+  referenceId: string;
+  status: 'Pending' | 'Verified' | 'Rejected';
+  notes?: string;
+  submittedAt: string;
+  verifiedAt?: string;
+}
+
 export interface PublicLicenseSummary {
   licensedTo: string;
   licensor: string;
+  madeByText: string;
   licenseKey: string;
   planName: string;
   price: number;
@@ -259,8 +311,22 @@ export interface PublicLicenseSummary {
   trialStartDate?: string;
   trialEndDate?: string;
   supportContact?: string;
+  ownerContactPhone?: string;
+  ownerWhatsapp?: string;
+  ownerEmail?: string;
   notes?: string;
   maxStudents: number;
+  paymentGateway?: {
+    provider: PaymentGatewayProvider;
+    upiId: string;
+    paymentLink?: string;
+    keyId?: string;
+    bankName?: string;
+    accountHolder?: string;
+    accountNo?: string;
+    ifsc?: string;
+  };
+  portalControls?: ClientPortalControls;
   plans: LicensePlan[];
 }
 

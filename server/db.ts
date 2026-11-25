@@ -10,7 +10,9 @@ import type {
   ExamAttempt,
   ExamPaper,
   InstituteSettings,
+  LicensePaymentRecord,
   LicensePlan,
+  OwnerProfileSettings,
   PaymentRecord,
   PublicLicenseSummary,
   QuestionItem,
@@ -192,6 +194,16 @@ export function initDatabase(): void {
     CREATE TABLE IF NOT EXISTS client_licenses (
       id TEXT PRIMARY KEY,
       sort_order INTEGER NOT NULL DEFAULT 0,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS owner_settings (
+      id TEXT PRIMARY KEY,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS license_payments (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      submitted_at TEXT NOT NULL,
       data TEXT NOT NULL
     );
   `);
@@ -525,7 +537,85 @@ export function initDatabase(): void {
     });
     tx();
   }
+
+  const hasOwnerSettings = db.prepare('SELECT 1 FROM owner_settings WHERE id = ?').get('owner');
+  if (!hasOwnerSettings) {
+    db.prepare('INSERT INTO owner_settings (id, data) VALUES (?, ?)').run(
+      'owner',
+      JSON.stringify(INITIAL_OWNER_PROFILE)
+    );
+  }
+
+  const licPayCount = db.prepare('SELECT COUNT(*) AS cnt FROM license_payments').get() as {
+    cnt: number;
+  };
+  if (licPayCount.cnt === 0) {
+    const initialLicPayments: LicensePaymentRecord[] = [
+      {
+        id: 'licpay-101',
+        clientId: 'lic-gurukul-primary',
+        clientName: 'Gurukul Classes',
+        licenseKey: 'SALAR-GC-2026-PRO',
+        planName: 'Pro Institute CBT License',
+        amount: 4999,
+        paymentMode: 'UPI',
+        referenceId: 'UTR409281749201',
+        status: 'Verified',
+        notes: 'Monthly license fee verified by SALAR Tech.',
+        submittedAt: '2026-11-01',
+        verifiedAt: '2026-11-01',
+      },
+      {
+        id: 'licpay-102',
+        clientId: 'lic-sankalp-cet',
+        clientName: 'Sankalp MHT-CET Hub',
+        licenseKey: 'SALAR-SNK-2026-STR',
+        planName: 'Starter Coaching License',
+        amount: 1999,
+        paymentMode: 'Payment Gateway',
+        referenceId: 'RZP_PAY_8839201',
+        status: 'Pending',
+        notes: 'Upgrade request after trial period.',
+        submittedAt: '2026-11-20',
+      },
+    ];
+    const stmt = db.prepare(
+      'INSERT INTO license_payments (id, client_id, submitted_at, data) VALUES (?, ?, ?, ?)'
+    );
+    const tx = db.transaction((rows: LicensePaymentRecord[]) => {
+      rows.forEach((p) => {
+        stmt.run(p.id, p.clientId, p.submittedAt, JSON.stringify(p));
+      });
+    });
+    tx(initialLicPayments);
+  }
 }
+
+export const INITIAL_OWNER_PROFILE: OwnerProfileSettings = {
+  companyName: 'SALAR Tech',
+  ownerName: 'Advait',
+  contactPhone: '+91 98230 11223',
+  whatsappNumber: '+91 98230 11223',
+  email: 'support@salartech.in',
+  address: 'Pune, Maharashtra, India',
+  gstNumber: '',
+  footerTagline: 'Made by SALAR Tech',
+  paymentGatewayProvider: 'UPI',
+  upiId: 'salartech@okicici',
+  gatewayKeyId: '',
+  gatewayPaymentLink: '',
+  bankName: 'HDFC Bank',
+  accountHolder: 'SALAR Tech',
+  accountNo: '50200048192011',
+  ifsc: 'HDFC0001204',
+  clientPortalControls: {
+    allowQuickJoin: true,
+    allowStudentSignup: true,
+    allowPayments: true,
+    maintenanceMode: false,
+    maintenanceMessage: '',
+  },
+};
 
 export function getSettings(): InstituteSettings {
   const row = db.prepare('SELECT data FROM settings WHERE id = ?').get('institute') as
@@ -619,16 +709,60 @@ export function updateOwnerPassword(newPassword: string, username?: string): voi
   ).run(nextUsername, hashSecret(newPassword), new Date().toISOString());
 }
 
+export function getOwnerProfile(): OwnerProfileSettings {
+  const row = db.prepare('SELECT data FROM owner_settings WHERE id = ?').get('owner') as
+    | { data: string }
+    | undefined;
+  if (!row) return INITIAL_OWNER_PROFILE;
+  const parsed = JSON.parse(row.data) as Partial<OwnerProfileSettings>;
+  return {
+    ...INITIAL_OWNER_PROFILE,
+    ...parsed,
+    clientPortalControls: {
+      ...INITIAL_OWNER_PROFILE.clientPortalControls,
+      ...(parsed.clientPortalControls || {}),
+    },
+  };
+}
+
+export function saveOwnerProfile(next: OwnerProfileSettings): OwnerProfileSettings {
+  db.prepare('INSERT OR REPLACE INTO owner_settings (id, data) VALUES (?, ?)').run(
+    'owner',
+    JSON.stringify(next)
+  );
+  return next;
+}
+
+export function listLicensePayments(): LicensePaymentRecord[] {
+  const rows = db
+    .prepare('SELECT data FROM license_payments ORDER BY submitted_at DESC, rowid DESC')
+    .all() as { data: string }[];
+  return rows.map((r) => JSON.parse(r.data) as LicensePaymentRecord);
+}
+
 export function getPublicLicenseSummary(): PublicLicenseSummary {
   const plans = listOrdered<LicensePlan>('license_plans');
   const clients = listOrdered<ClientLicense>('client_licenses');
   const primary = clients.find((c) => c.isPrimaryPortal) ?? clients[0];
+  const ownerProfile = getOwnerProfile();
+  const defaultSupport = `${ownerProfile.contactPhone} · ${ownerProfile.email}`;
+  const gatewaySummary = {
+    provider: ownerProfile.paymentGatewayProvider,
+    upiId: ownerProfile.upiId,
+    paymentLink: ownerProfile.gatewayPaymentLink || undefined,
+    keyId: ownerProfile.gatewayKeyId || undefined,
+    bankName: ownerProfile.bankName || undefined,
+    accountHolder: ownerProfile.accountHolder || undefined,
+    accountNo: ownerProfile.accountNo || undefined,
+    ifsc: ownerProfile.ifsc || undefined,
+  };
 
   if (!primary) {
     const fallbackPlan = plans[1] ?? plans[0];
     return {
       licensedTo: getSettings().instituteName,
-      licensor: 'SALAR Tech',
+      licensor: ownerProfile.companyName || 'SALAR Tech',
+      madeByText: ownerProfile.footerTagline || 'Made by SALAR Tech',
       licenseKey: 'SALAR-TRIAL-2026',
       planName: fallbackPlan?.name ?? 'Pro Institute CBT License',
       price: fallbackPlan?.price ?? 4999,
@@ -636,15 +770,21 @@ export function getPublicLicenseSummary(): PublicLicenseSummary {
       status: 'Active',
       issuedAt: '2026-01-01',
       expiresAt: '2027-12-31',
-      supportContact: '+91 98230 11223 · support@salartech.in',
+      supportContact: defaultSupport,
+      ownerContactPhone: ownerProfile.contactPhone,
+      ownerWhatsapp: ownerProfile.whatsappNumber,
+      ownerEmail: ownerProfile.email,
       maxStudents: fallbackPlan?.maxStudents ?? 1000,
+      paymentGateway: gatewaySummary,
+      portalControls: ownerProfile.clientPortalControls,
       plans,
     };
   }
 
   return {
     licensedTo: primary.clientName,
-    licensor: 'SALAR Tech',
+    licensor: ownerProfile.companyName || 'SALAR Tech',
+    madeByText: ownerProfile.footerTagline || 'Made by SALAR Tech',
     licenseKey: primary.licenseKey,
     planName: primary.planName,
     price: primary.customPrice,
@@ -654,9 +794,14 @@ export function getPublicLicenseSummary(): PublicLicenseSummary {
     expiresAt: primary.expiresAt,
     trialStartDate: primary.trialStartDate,
     trialEndDate: primary.trialEndDate,
-    supportContact: primary.supportContact || '+91 98230 11223 · support@salartech.in',
+    supportContact: primary.supportContact || defaultSupport,
+    ownerContactPhone: ownerProfile.contactPhone,
+    ownerWhatsapp: ownerProfile.whatsappNumber,
+    ownerEmail: ownerProfile.email,
     notes: primary.notes,
     maxStudents: primary.maxStudents,
+    paymentGateway: gatewaySummary,
+    portalControls: ownerProfile.clientPortalControls,
     plans,
   };
 }

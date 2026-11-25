@@ -262,6 +262,14 @@ export function LoginView({
                     </p>
                   </div>
                 </form>
+              ) : license?.portalControls?.allowStudentSignup === false ? (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded text-xs text-amber-900 space-y-1.5">
+                  <p className="font-bold">Self-Registration Paused</p>
+                  <p className="leading-relaxed">
+                    New student self-signup is currently paused by the portal administrator. Please
+                    sign in using your assigned Roll Number or contact support ({license.ownerContactPhone || license.supportContact}).
+                  </p>
+                </div>
               ) : (
                 <form onSubmit={handleStudentRegister} className="space-y-3">
                   <div>
@@ -417,14 +425,21 @@ export function LoginView({
           )}
 
           {license && (
-            <div className="pt-3 border-t border-slate-100 text-[11px] font-mono text-slate-500 flex flex-wrap items-center justify-between gap-2">
-              <span>
-                Licensed by <strong>{license.licensor}</strong> · {license.planName}
-              </span>
-              <span>
-                ₹{new Intl.NumberFormat('en-IN').format(license.price)} / {license.billingCycle} ·{' '}
-                {license.status}
-              </span>
+            <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-500 space-y-1">
+              <div className="font-mono flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-slate-700">
+                  {license.madeByText || `Made by ${license.licensor}`}
+                </span>
+                <span>
+                  {license.planName} · ₹{new Intl.NumberFormat('en-IN').format(license.price)} /{' '}
+                  {license.billingCycle} · {license.status}
+                </span>
+              </div>
+              {(license.ownerContactPhone || license.ownerEmail) && (
+                <p className="text-[10px] font-mono text-slate-500">
+                  Support: {license.ownerContactPhone} · {license.ownerEmail}
+                </p>
+              )}
             </div>
           )}
         </div>

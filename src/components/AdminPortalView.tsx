@@ -12,6 +12,7 @@ import {
   Copy,
   CreditCard,
   Download,
+  ExternalLink,
   FileText,
   FolderPlus,
   GraduationCap,
@@ -23,8 +24,10 @@ import {
   Link2,
   ListChecks,
   LogOut,
+  Mail,
   Menu,
   Pause,
+  Phone,
   Play,
   Plus,
   RefreshCw,
@@ -68,6 +71,7 @@ import {
 } from './ExamModals';
 import { buildShortExamUrl, encodeHydratedBundle } from '../utils/shareLinks';
 import { formatTrialRange, toDDMMYYYY } from '../utils/licenseDates';
+import { api } from '../api/client';
 
 export type AdminTab =
   | 'dashboard'
@@ -328,6 +332,14 @@ export function AdminPortalView({
   const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [passMsg, setPassMsg] = useState('');
+
+  // License renewal / owner payment gateway form
+  const [licPayOpen, setLicPayOpen] = useState(false);
+  const [licPayMode, setLicPayMode] = useState<'UPI' | 'Payment Gateway' | 'Bank Transfer'>('UPI');
+  const [licPayRef, setLicPayRef] = useState('');
+  const [licPayNotes, setLicPayNotes] = useState('');
+  const [licPayBusy, setLicPayBusy] = useState(false);
+  const [licPayMsg, setLicPayMsg] = useState('');
 
   useEffect(() => {
     setSettingsDraft(settings);
@@ -682,6 +694,9 @@ export function AdminPortalView({
               <p className="font-mono text-[10px] text-slate-500 mt-0.5 truncate">
                 ₹{new Intl.NumberFormat('en-IN').format(license.price)}/{license.billingCycle} ·{' '}
                 {license.planName}
+              </p>
+              <p className="font-mono text-[10px] font-semibold text-[#0F3CC9] mt-0.5 truncate">
+                {license.madeByText || 'Made by SALAR Tech'}
               </p>
             </button>
           )}
@@ -3100,23 +3115,35 @@ export function AdminPortalView({
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
                     <div>
                       <p className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
-                        {license.licensor} · Commercial License &amp; Pricing
+                        {license.madeByText || `Made by ${license.licensor}`} · Commercial License &amp; Pricing
                       </p>
                       <h2 className="text-base font-bold text-slate-900 mt-0.5">
                         Portal Software License Details
                       </h2>
                     </div>
-                    <span
-                      className={`px-2.5 py-1 text-[11px] font-mono font-bold rounded border self-start sm:self-auto ${
-                        license.status === 'Active'
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          : license.status === 'Suspended' || license.status === 'Expired'
-                          ? 'bg-rose-50 text-rose-700 border-rose-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}
-                    >
-                      Status: {license.status}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                      <span
+                        className={`px-2.5 py-1 text-[11px] font-mono font-bold rounded border ${
+                          license.status === 'Active'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : license.status === 'Suspended' || license.status === 'Expired'
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                      >
+                        Status: {license.status}
+                      </span>
+                      {license.paymentGateway && (
+                        <button
+                          type="button"
+                          onClick={() => setLicPayOpen((v) => !v)}
+                          className="px-3 py-1 text-[11px] font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded inline-flex items-center gap-1.5"
+                        >
+                          <CreditCard className="w-3.5 h-3.5" />
+                          {licPayOpen ? 'Hide Payment Gateway' : 'Pay / Renew License'}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-slate-50 border border-slate-200 rounded-lg p-4">
@@ -3145,26 +3172,159 @@ export function AdminPortalView({
                     </div>
                   </div>
 
-                  {(formatTrialRange(license.trialStartDate, license.trialEndDate) ||
-                    license.supportContact) && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-blue-50/40 border border-blue-200 rounded-lg p-3.5">
-                      {formatTrialRange(license.trialStartDate, license.trialEndDate) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-blue-50/40 border border-blue-200 rounded-lg p-3.5">
+                    <div>
+                      <p className="text-[11px] text-slate-500">Platform Credit</p>
+                      <p className="font-bold text-slate-900 mt-0.5">
+                        {license.madeByText || `Made by ${license.licensor}`}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-slate-500">
+                        {license.licensor} Contact &amp; Mail ID
+                      </p>
+                      <p className="font-mono font-semibold text-slate-900 mt-0.5 flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1">
+                          <Phone className="w-3 h-3 text-[#0F3CC9]" />
+                          {license.ownerContactPhone || license.supportContact}
+                        </span>
+                        {license.ownerEmail && (
+                          <span className="inline-flex items-center gap-1">
+                            <Mail className="w-3 h-3 text-[#0F3CC9]" />
+                            {license.ownerEmail}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-slate-500">Trial Period</p>
+                      <p className="font-mono font-semibold text-[#0F3CC9] mt-0.5">
+                        {formatTrialRange(license.trialStartDate, license.trialEndDate) ||
+                          'Standard Commercial License'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {licPayOpen && license.paymentGateway && (
+                    <div className="border border-emerald-200 bg-emerald-50/40 rounded-lg p-4 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200 pb-2.5">
                         <div>
-                          <p className="text-[11px] text-slate-500">Trial Period</p>
-                          <p className="font-mono font-semibold text-[#0F3CC9] mt-0.5">
-                            {formatTrialRange(license.trialStartDate, license.trialEndDate)}
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                            Pay {license.licensor} License Fee via {license.paymentGateway.provider}
+                          </h3>
+                          <p className="text-[11px] text-slate-600">
+                            Amount Due: ₹{new Intl.NumberFormat('en-IN').format(license.price)} /{' '}
+                            {license.billingCycle}
                           </p>
                         </div>
-                      )}
-                      {license.supportContact && (
+                        {license.paymentGateway.paymentLink && (
+                          <a
+                            href={license.paymentGateway.paymentLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded self-start"
+                          >
+                            <span>Open {license.paymentGateway.provider} Gateway</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white border border-slate-200 rounded p-3">
                         <div>
-                          <p className="text-[11px] text-slate-500">
-                            {license.licensor} Support Team
+                          <p className="text-[10px] font-mono uppercase text-slate-500">Owner UPI ID</p>
+                          <p className="font-mono font-bold text-slate-900 mt-0.5">
+                            {license.paymentGateway.upiId || '—'}
                           </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-mono uppercase text-slate-500">
+                            Bank &amp; Account Holder
+                          </p>
+                          <p className="font-semibold text-slate-900 mt-0.5">
+                            {license.paymentGateway.bankName} · {license.paymentGateway.accountHolder}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-mono uppercase text-slate-500">Account / IFSC</p>
                           <p className="font-mono font-semibold text-slate-900 mt-0.5">
-                            {license.supportContact}
+                            {license.paymentGateway.accountNo} · {license.paymentGateway.ifsc}
                           </p>
                         </div>
+                      </div>
+
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          setLicPayMsg('');
+                          setLicPayBusy(true);
+                          try {
+                            const res = await api.submitClientLicensePayment({
+                              planName: license.planName,
+                              amount: license.price,
+                              paymentMode: licPayMode,
+                              referenceId: licPayRef.trim(),
+                              notes: licPayNotes.trim(),
+                              clientName: license.licensedTo,
+                            });
+                            setLicPayMsg(
+                              `Submitted payment reference ${res.payment.referenceId} to ${license.licensor}.`
+                            );
+                            setLicPayRef('');
+                            setLicPayNotes('');
+                          } catch (err) {
+                            setLicPayMsg(
+                              err instanceof Error ? err.message : 'Unable to submit payment proof.'
+                            );
+                          } finally {
+                            setLicPayBusy(false);
+                          }
+                        }}
+                        className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end"
+                      >
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">
+                            Payment Mode
+                          </label>
+                          <select
+                            value={licPayMode}
+                            onChange={(e) =>
+                              setLicPayMode(
+                                e.target.value as 'UPI' | 'Payment Gateway' | 'Bank Transfer'
+                              )
+                            }
+                            className="w-full px-3 py-2 border border-slate-300 rounded bg-white"
+                          >
+                            <option value="UPI">UPI</option>
+                            <option value="Payment Gateway">
+                              Payment Gateway ({license.paymentGateway.provider})
+                            </option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-semibold text-slate-700 mb-1">
+                            UTR / Transaction Ref *
+                          </label>
+                          <input
+                            type="text"
+                            value={licPayRef}
+                            onChange={(e) => setLicPayRef(e.target.value)}
+                            placeholder="e.g. 604811920041"
+                            className="w-full px-3 py-2 border border-slate-300 rounded font-mono bg-white"
+                            required
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={licPayBusy}
+                          className="px-4 py-2 font-semibold text-white bg-[#0B192C] hover:bg-slate-900 rounded disabled:opacity-60"
+                        >
+                          {licPayBusy ? 'Submitting...' : 'Submit License Payment'}
+                        </button>
+                      </form>
+                      {licPayMsg && (
+                        <p className="text-xs font-medium text-emerald-800">{licPayMsg}</p>
                       )}
                     </div>
                   )}

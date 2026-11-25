@@ -7,7 +7,9 @@ import type {
   ExamAttempt,
   ExamPaper,
   InstituteSettings,
+  LicensePaymentRecord,
   LicensePlan,
+  OwnerProfileSettings,
   PaymentRecord,
   PublicLicenseSummary,
   QuestionItem,
@@ -103,8 +105,15 @@ export interface AdminWorkspaceResponse {
 
 export interface OwnerWorkspaceResponse {
   ownerUsername: string;
+  ownerProfile: OwnerProfileSettings;
   plans: LicensePlan[];
   clients: ClientLicense[];
+  licensePayments: LicensePaymentRecord[];
+  portalSettings: InstituteSettings;
+  adminEmail: string;
+  portalExams: ExamPaper[];
+  portalStudents: StudentRecord[];
+  portalPayments: PaymentRecord[];
   portalStats: { studentsCount: number; examsCount: number };
 }
 
@@ -473,4 +482,84 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword, username }),
     }),
+
+  submitClientLicensePayment: (payload: {
+    planName?: string;
+    amount?: number;
+    paymentMode: LicensePaymentRecord['paymentMode'];
+    referenceId: string;
+    notes?: string;
+    clientName?: string;
+  }) =>
+    apiFetch<{ payment: LicensePaymentRecord }>('/api/public/license-payment', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateOwnerProfile: (profile: Partial<OwnerProfileSettings>) =>
+    apiFetch<{ ownerProfile: OwnerProfileSettings }>('/api/owner/profile', {
+      method: 'PUT',
+      body: JSON.stringify(profile),
+    }),
+
+  createOwnerLicensePayment: (
+    payload: Partial<LicensePaymentRecord> & { activateClient?: boolean }
+  ) =>
+    apiFetch<{ payment: LicensePaymentRecord }>('/api/owner/license-payments', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateOwnerLicensePaymentStatus: (
+    id: string,
+    status: LicensePaymentRecord['status'],
+    activateClient = true
+  ) =>
+    apiFetch<{ payment: LicensePaymentRecord }>(
+      `/api/owner/license-payments/${encodeURIComponent(id)}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ status, activateClient }),
+      }
+    ),
+
+  deleteOwnerLicensePayment: (id: string) =>
+    apiFetch<{ ok: boolean }>(`/api/owner/license-payments/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+
+  ownerUpdateClientSettings: (settings: Partial<InstituteSettings>) =>
+    apiFetch<{ settings: InstituteSettings }>('/api/owner/client-portal/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
+
+  ownerResetClientAdminPasscode: (newPasscode: string, email?: string) =>
+    apiFetch<{ ok: boolean; email: string }>('/api/owner/client-portal/reset-admin-passcode', {
+      method: 'POST',
+      body: JSON.stringify({ newPasscode, email }),
+    }),
+
+  ownerToggleClientExam: (examId: string) =>
+    apiFetch<{ exam: ExamPaper }>(
+      `/api/owner/client-portal/exams/${encodeURIComponent(examId)}/toggle`,
+      {
+        method: 'PATCH',
+      }
+    ),
+
+  ownerImpersonateAdmin: () =>
+    apiFetch<{ token: string; role: 'admin'; email: string }>(
+      '/api/owner/client-portal/impersonate-admin',
+      { method: 'POST' }
+    ),
+
+  ownerImpersonateStudent: (studentId?: string) =>
+    apiFetch<{ token: string; role: 'student'; student: StudentRecord }>(
+      '/api/owner/client-portal/impersonate-student',
+      {
+        method: 'POST',
+        body: JSON.stringify({ studentId }),
+      }
+    ),
 };

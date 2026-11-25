@@ -1,20 +1,26 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   Building2,
   CalendarPlus,
   CheckCircle2,
+  CreditCard,
   Edit3,
+  Globe,
   KeyRound,
   Layers,
   LogOut,
+  Mail,
+  Phone,
   Plus,
   RefreshCw,
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Sliders,
   Star,
   Trash2,
+  UserCheck,
   Users,
   X,
 } from 'lucide-react';
@@ -23,7 +29,10 @@ import type {
   ClientLicenseStatus,
   InstituteSettings,
   LicenseBillingCycle,
+  LicensePaymentRecord,
   LicensePlan,
+  OwnerProfileSettings,
+  PaymentGatewayProvider,
 } from '../types/portal';
 import { api, setAuthToken, type OwnerWorkspaceResponse } from '../api/client';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -163,6 +172,8 @@ interface OwnerPortalViewProps {
   workspace: OwnerWorkspaceResponse;
   onRefresh: () => Promise<void>;
   onOpenClientPortal: () => void;
+  onOpenAdminConsole: () => Promise<void>;
+  onOpenStudentPortal: () => Promise<void>;
   onLogout: () => Promise<void> | void;
 }
 
@@ -173,6 +184,14 @@ const CLIENT_STATUSES: ClientLicenseStatus[] = [
   'Grace Period',
   'Suspended',
   'Expired',
+];
+const GATEWAY_PROVIDERS: PaymentGatewayProvider[] = [
+  'UPI',
+  'Razorpay',
+  'Cashfree',
+  'PhonePe',
+  'Stripe',
+  'Bank Transfer',
 ];
 
 function getStatusBadgeClass(status: ClientLicenseStatus): string {
@@ -193,9 +212,13 @@ export function OwnerPortalView({
   workspace,
   onRefresh,
   onOpenClientPortal,
+  onOpenAdminConsole,
+  onOpenStudentPortal,
   onLogout,
 }: OwnerPortalViewProps) {
-  const [activeTab, setActiveTab] = useState<'clients' | 'plans' | 'security'>('clients');
+  const [activeTab, setActiveTab] = useState<
+    'clients' | 'plans' | 'billing' | 'portal' | 'profile'
+  >('clients');
   const [toast, setToast] = useState('');
   const [errorBanner, setErrorBanner] = useState('');
   const [busy, setBusy] = useState(false);
@@ -224,7 +247,7 @@ export function OwnerPortalView({
   const [newClientTrialEnd, setNewClientTrialEnd] = useState('');
   const [newClientTrialRangeInput, setNewClientTrialRangeInput] = useState('');
   const [newClientSupportContact, setNewClientSupportContact] = useState(
-    '+91 98230 11223 · support@salartech.in'
+    `${workspace.ownerProfile.contactPhone} · ${workspace.ownerProfile.email}`
   );
   const [newClientNotes, setNewClientNotes] = useState('');
 
@@ -241,6 +264,26 @@ export function OwnerPortalView({
   const [editingPlan, setEditingPlan] = useState<Partial<LicensePlan> | null>(null);
   const [planFeaturesText, setPlanFeaturesText] = useState('');
 
+  // Owner Profile, Contact, Gateway & Feature Controls Draft
+  const [profileDraft, setProfileDraft] = useState<OwnerProfileSettings>(workspace.ownerProfile);
+
+  // Client Portal Full Management Drafts
+  const [portalSettingsDraft, setPortalSettingsDraft] = useState<InstituteSettings>(
+    workspace.portalSettings
+  );
+  const [resetAdminEmail, setResetAdminEmail] = useState(workspace.adminEmail);
+  const [resetAdminPasscode, setResetAdminPasscode] = useState('');
+
+  // Record Manual License Payment form
+  const [licPayClientId, setLicPayClientId] = useState(workspace.clients[0]?.id ?? '');
+  const [licPayAmount, setLicPayAmount] = useState(
+    String(workspace.clients[0]?.customPrice ?? 4999)
+  );
+  const [licPayMode, setLicPayMode] = useState<LicensePaymentRecord['paymentMode']>('UPI');
+  const [licPayRef, setLicPayRef] = useState('');
+  const [licPayNotes, setLicPayNotes] = useState('');
+  const [licPayActivate, setLicPayActivate] = useState(true);
+
   // Owner password update
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -253,6 +296,13 @@ export function OwnerPortalView({
     message: string;
     onConfirm: () => Promise<void>;
   } | null>(null);
+
+  useEffect(() => {
+    setProfileDraft(workspace.ownerProfile);
+    setPortalSettingsDraft(workspace.portalSettings);
+    setResetAdminEmail(workspace.adminEmail);
+    setNewUsername(workspace.ownerUsername);
+  }, [workspace]);
 
   const notify = (msg: string) => {
     setErrorBanner('');
@@ -611,7 +661,7 @@ export function OwnerPortalView({
 
         {/* Tabs */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setActiveTab('clients')}
@@ -632,18 +682,43 @@ export function OwnerPortalView({
                   : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
             >
-              License Plans &amp; Pricing ({workspace.plans.length})
+              Plans &amp; Pricing ({workspace.plans.length})
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('security')}
-              className={`px-3.5 py-2 text-xs font-semibold rounded transition-colors ${
-                activeTab === 'security'
+              onClick={() => setActiveTab('billing')}
+              className={`px-3.5 py-2 text-xs font-semibold rounded transition-colors inline-flex items-center gap-1.5 ${
+                activeTab === 'billing'
                   ? 'bg-[#0F3CC9] text-white'
                   : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
               }`}
             >
-              Owner Account
+              <CreditCard className="w-3.5 h-3.5" />
+              Payment Gateway &amp; Billing ({workspace.licensePayments.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('portal')}
+              className={`px-3.5 py-2 text-xs font-semibold rounded transition-colors inline-flex items-center gap-1.5 ${
+                activeTab === 'portal'
+                  ? 'bg-[#0F3CC9] text-white'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              Client Portal Control
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('profile')}
+              className={`px-3.5 py-2 text-xs font-semibold rounded transition-colors inline-flex items-center gap-1.5 ${
+                activeTab === 'profile'
+                  ? 'bg-[#0F3CC9] text-white'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              Owner Profile &amp; Security
             </button>
           </div>
 
@@ -896,80 +971,1125 @@ export function OwnerPortalView({
           </div>
         )}
 
-        {/* Owner Account & Password Settings */}
-        {activeTab === 'security' && (
-          <div className="max-w-xl bg-white border border-slate-200 rounded-lg p-6 space-y-4 text-xs">
-            <div className="flex items-center gap-2.5">
-              <KeyRound className="w-4 h-4 text-[#0F3CC9]" />
-              <h2 className="text-sm font-bold text-slate-900">
-                SALAR Tech Owner Credentials
-              </h2>
+        {/* Payment Gateway & Billing Ledger */}
+        {activeTab === 'billing' && (
+          <div className="space-y-6 text-xs">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Gateway & UPI Configuration */}
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
+                  setErrorBanner('');
+                  try {
+                    await api.updateOwnerProfile(profileDraft);
+                    await onRefresh();
+                    notify('Owner Payment Gateway & Bank settings saved.');
+                  } catch (err) {
+                    setErrorBanner(
+                      err instanceof Error ? err.message : 'Unable to save payment gateway settings.'
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                className="lg:col-span-7 bg-white border border-slate-200 rounded-lg p-5 space-y-4"
+              >
+                <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-[#0F3CC9]" />
+                    <h2 className="text-sm font-bold text-slate-900">
+                      Owner Payment Gateway &amp; Settlement Bank
+                    </h2>
+                  </div>
+                  <span className="font-mono text-[10px] px-2 py-0.5 bg-blue-50 text-[#0F3CC9] border border-blue-200 rounded">
+                    {profileDraft.paymentGatewayProvider}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Payment Gateway Provider
+                    </label>
+                    <select
+                      value={profileDraft.paymentGatewayProvider}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({
+                          ...p,
+                          paymentGatewayProvider: e.target.value as PaymentGatewayProvider,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border border-slate-300 rounded bg-white"
+                    >
+                      {GATEWAY_PROVIDERS.map((g) => (
+                        <option key={g} value={g}>
+                          {g}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Owner Merchant UPI ID
+                    </label>
+                    <input
+                      type="text"
+                      value={profileDraft.upiId}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({ ...p, upiId: e.target.value }))
+                      }
+                      placeholder="salartech@okaxis"
+                      className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Gateway Public Key ID (Razorpay / Cashfree)
+                    </label>
+                    <input
+                      type="text"
+                      value={profileDraft.gatewayKeyId}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({ ...p, gatewayKeyId: e.target.value }))
+                      }
+                      placeholder="rzp_live_XXXXXXXXXX"
+                      className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Hosted Payment Link URL
+                    </label>
+                    <input
+                      type="url"
+                      value={profileDraft.gatewayPaymentLink}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({ ...p, gatewayPaymentLink: e.target.value }))
+                      }
+                      placeholder="https://rzp.io/l/salartech"
+                      className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Bank Name</label>
+                    <input
+                      type="text"
+                      value={profileDraft.bankName}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({ ...p, bankName: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 border border-slate-300 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Account Holder Name
+                    </label>
+                    <input
+                      type="text"
+                      value={profileDraft.accountHolder}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({ ...p, accountHolder: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 border border-slate-300 rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Account Number
+                    </label>
+                    <input
+                      type="text"
+                      value={profileDraft.accountNo}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({ ...p, accountNo: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">IFSC Code</label>
+                    <input
+                      type="text"
+                      value={profileDraft.ifsc}
+                      onChange={(e) =>
+                        setProfileDraft((p) => ({ ...p, ifsc: e.target.value }))
+                      }
+                      className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2 border-t border-slate-100">
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="px-4 py-2 font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded"
+                  >
+                    Save Payment Gateway
+                  </button>
+                </div>
+              </form>
+
+              {/* Record Manual / Direct Client License Payment */}
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
+                  setErrorBanner('');
+                  try {
+                    await api.createOwnerLicensePayment({
+                      clientId: licPayClientId,
+                      amount: Number(licPayAmount) || 0,
+                      paymentMode: licPayMode,
+                      referenceId: licPayRef.trim(),
+                      notes: licPayNotes.trim(),
+                      status: 'Verified',
+                      activateClient: licPayActivate,
+                    });
+                    setLicPayRef('');
+                    setLicPayNotes('');
+                    await onRefresh();
+                    notify('Client license payment recorded and synced.');
+                  } catch (err) {
+                    setErrorBanner(
+                      err instanceof Error ? err.message : 'Unable to record license payment.'
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-5 space-y-3"
+              >
+                <h2 className="text-sm font-bold text-slate-900 border-b border-slate-200 pb-3">
+                  Record Client License Payment
+                </h2>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Client</label>
+                  <select
+                    value={licPayClientId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setLicPayClientId(id);
+                      const found = workspace.clients.find((c) => c.id === id);
+                      if (found) setLicPayAmount(String(found.customPrice));
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded bg-white"
+                  >
+                    {workspace.clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.clientName} ({c.licenseKey})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Amount (₹)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={licPayAmount}
+                      onChange={(e) => setLicPayAmount(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded font-mono font-bold"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Mode</label>
+                    <select
+                      value={licPayMode}
+                      onChange={(e) =>
+                        setLicPayMode(e.target.value as LicensePaymentRecord['paymentMode'])
+                      }
+                      className="w-full px-3 py-2 border border-slate-300 rounded bg-white"
+                    >
+                      <option value="UPI">UPI</option>
+                      <option value="Payment Gateway">Payment Gateway</option>
+                      <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Cash / Manual">Cash / Manual</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    UTR / Gateway Reference ID *
+                  </label>
+                  <input
+                    type="text"
+                    value={licPayRef}
+                    onChange={(e) => setLicPayRef(e.target.value)}
+                    placeholder="e.g. UTR-60491234 or pay_xyz"
+                    className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Notes</label>
+                  <input
+                    type="text"
+                    value={licPayNotes}
+                    onChange={(e) => setLicPayNotes(e.target.value)}
+                    placeholder="Optional billing period note"
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                  />
+                </div>
+                <label className="flex items-center gap-2 font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={licPayActivate}
+                    onChange={(e) => setLicPayActivate(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  Auto-activate client &amp; extend validity cycle
+                </label>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full py-2 font-semibold text-white bg-[#0B192C] hover:bg-slate-900 rounded"
+                >
+                  Record Verified License Payment
+                </button>
+              </form>
             </div>
 
+            {/* Client License Payment Ledger */}
+            <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Client License Payment Ledger
+                </h3>
+                <span className="font-mono text-[11px] text-slate-500">
+                  {workspace.licensePayments.filter((p) => p.status === 'Pending').length} pending
+                  verification
+                </span>
+              </div>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                    <th className="py-2.5 px-4">Date</th>
+                    <th className="py-2.5 px-4">Client &amp; Key</th>
+                    <th className="py-2.5 px-4">Plan &amp; Amount</th>
+                    <th className="py-2.5 px-4">Mode &amp; Reference</th>
+                    <th className="py-2.5 px-4">Status</th>
+                    <th className="py-2.5 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {workspace.licensePayments.map((lp) => (
+                    <tr key={lp.id}>
+                      <td className="py-3 px-4 font-mono text-slate-600">
+                        {toDDMMYYYY(lp.submittedAt)}
+                      </td>
+                      <td className="py-3 px-4">
+                        <p className="font-bold text-slate-900">{lp.clientName}</p>
+                        <p className="font-mono text-[11px] text-slate-500">{lp.licenseKey}</p>
+                      </td>
+                      <td className="py-3 px-4">
+                        <p className="font-mono font-bold text-slate-900">
+                          ₹{new Intl.NumberFormat('en-IN').format(lp.amount)}
+                        </p>
+                        <p className="text-[11px] text-slate-500">{lp.planName}</p>
+                      </td>
+                      <td className="py-3 px-4">
+                        <p className="font-semibold text-slate-800">{lp.paymentMode}</p>
+                        <p className="font-mono text-[11px] text-slate-600">{lp.referenceId}</p>
+                        {lp.notes && (
+                          <p className="text-[11px] text-slate-500 italic">{lp.notes}</p>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`inline-block px-2 py-0.5 text-[11px] font-semibold border rounded ${
+                            lp.status === 'Verified'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : lp.status === 'Rejected'
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-amber-50 text-amber-800 border-amber-200'
+                          }`}
+                        >
+                          {lp.status}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <div className="inline-flex items-center gap-1.5">
+                          {lp.status !== 'Verified' && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={async () => {
+                                setBusy(true);
+                                try {
+                                  await api.updateOwnerLicensePaymentStatus(
+                                    lp.id,
+                                    'Verified',
+                                    true
+                                  );
+                                  await onRefresh();
+                                  notify(
+                                    `Verified payment ${lp.referenceId} & activated ${lp.clientName}.`
+                                  );
+                                } catch (err) {
+                                  setErrorBanner(
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Unable to verify payment.'
+                                  );
+                                } finally {
+                                  setBusy(false);
+                                }
+                              }}
+                              className="px-2 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100"
+                            >
+                              Verify &amp; Activate
+                            </button>
+                          )}
+                          {lp.status === 'Pending' && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={async () => {
+                                setBusy(true);
+                                try {
+                                  await api.updateOwnerLicensePaymentStatus(
+                                    lp.id,
+                                    'Rejected',
+                                    false
+                                  );
+                                  await onRefresh();
+                                  notify(`Marked payment ${lp.referenceId} as Rejected.`);
+                                } finally {
+                                  setBusy(false);
+                                }
+                              }}
+                              className="px-2 py-1 text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100"
+                            >
+                              Reject
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={async () => {
+                              setBusy(true);
+                              try {
+                                await api.deleteOwnerLicensePayment(lp.id);
+                                await onRefresh();
+                                notify('Payment entry removed.');
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-700"
+                            title="Delete payment entry"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Full Client Portal Control */}
+        {activeTab === 'portal' && (
+          <div className="space-y-6 text-xs">
+            {/* One-Click Direct Portal Access */}
+            <section className="bg-white border border-slate-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-mono uppercase tracking-wider text-[#0F3CC9] font-semibold">
+                  Owner Master Access
+                </p>
+                <h2 className="text-sm font-bold text-slate-900 mt-0.5">
+                  Handle Full Client Portal Directly ({portalSettingsDraft.instituteName})
+                </h2>
+                <p className="text-slate-600 mt-0.5">
+                  Jump directly into the Client Admin Console or Student Portal with owner privileges,
+                  or control global switches &amp; exams below.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const res = await api.ownerImpersonateAdmin();
+                      setAuthToken(res.token);
+                      await onOpenAdminConsole();
+                    } catch (err) {
+                      setErrorBanner(
+                        err instanceof Error ? err.message : 'Unable to open Admin Console.'
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  Open Client Admin Console
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const res = await api.ownerImpersonateStudent();
+                      setAuthToken(res.token);
+                      await onOpenStudentPortal();
+                    } catch (err) {
+                      setErrorBanner(
+                        err instanceof Error ? err.message : 'Unable to open Student Portal.'
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded"
+                >
+                  <UserCheck className="w-4 h-4" />
+                  Open Student Portal
+                </button>
+              </div>
+            </section>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Feature Toggles & Maintenance Mode */}
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
+                  setErrorBanner('');
+                  try {
+                    await api.updateOwnerProfile(profileDraft);
+                    await onRefresh();
+                    notify('Client portal feature switches & maintenance controls updated.');
+                  } catch (err) {
+                    setErrorBanner(
+                      err instanceof Error ? err.message : 'Failed to save portal switches.'
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-5 space-y-3.5"
+              >
+                <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+                  <Sliders className="w-4 h-4 text-[#0F3CC9]" />
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Global Client Feature Switches
+                  </h3>
+                </div>
+
+                <label className="flex items-start gap-2.5 p-2.5 border border-slate-200 rounded bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={profileDraft.clientPortalControls.allowQuickJoin}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({
+                        ...p,
+                        clientPortalControls: {
+                          ...p.clientPortalControls,
+                          allowQuickJoin: e.target.checked,
+                        },
+                      }))
+                    }
+                    className="mt-0.5 rounded border-slate-300"
+                  />
+                  <div>
+                    <p className="font-semibold text-slate-900">Allow Quick Join Exam Links</p>
+                    <p className="text-[11px] text-slate-500">
+                      Students can join shared live tests with phone/name without prior account.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-2.5 border border-slate-200 rounded bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={profileDraft.clientPortalControls.allowStudentSignup}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({
+                        ...p,
+                        clientPortalControls: {
+                          ...p.clientPortalControls,
+                          allowStudentSignup: e.target.checked,
+                        },
+                      }))
+                    }
+                    className="mt-0.5 rounded border-slate-300"
+                  />
+                  <div>
+                    <p className="font-semibold text-slate-900">Allow Public Student Signup</p>
+                    <p className="text-[11px] text-slate-500">
+                      Enable or lock self-registration on the Client Portal login screen.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-2.5 border border-slate-200 rounded bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={profileDraft.clientPortalControls.allowPayments}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({
+                        ...p,
+                        clientPortalControls: {
+                          ...p.clientPortalControls,
+                          allowPayments: e.target.checked,
+                        },
+                      }))
+                    }
+                    className="mt-0.5 rounded border-slate-300"
+                  />
+                  <div>
+                    <p className="font-semibold text-slate-900">Enable Course / Test Payments</p>
+                    <p className="text-[11px] text-slate-500">
+                      Controls student checkout and UPI enrollment buttons in the client portal.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-2.5 border border-amber-200 rounded bg-amber-50">
+                  <input
+                    type="checkbox"
+                    checked={profileDraft.clientPortalControls.maintenanceMode}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({
+                        ...p,
+                        clientPortalControls: {
+                          ...p.clientPortalControls,
+                          maintenanceMode: e.target.checked,
+                        },
+                      }))
+                    }
+                    className="mt-0.5 rounded border-amber-400"
+                  />
+                  <div>
+                    <p className="font-semibold text-amber-950">Maintenance Mode Lock</p>
+                    <p className="text-[11px] text-amber-800">
+                      Temporarily puts the Client Portal into maintenance notice screen.
+                    </p>
+                  </div>
+                </label>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Maintenance Notice Message
+                  </label>
+                  <input
+                    type="text"
+                    value={profileDraft.clientPortalControls.maintenanceMessage}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({
+                        ...p,
+                        clientPortalControls: {
+                          ...p.clientPortalControls,
+                          maintenanceMessage: e.target.value,
+                        },
+                      }))
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full py-2 font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded"
+                >
+                  Save Portal Feature Controls
+                </button>
+              </form>
+
+              {/* Edit Client Institute Settings + Reset Client Admin Passcode */}
+              <div className="lg:col-span-7 space-y-5">
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setBusy(true);
+                    setErrorBanner('');
+                    try {
+                      await api.ownerUpdateClientSettings(portalSettingsDraft);
+                      await onRefresh();
+                      notify('Client Institute Settings updated.');
+                    } catch (err) {
+                      setErrorBanner(
+                        err instanceof Error ? err.message : 'Unable to save client settings.'
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="bg-white border border-slate-200 rounded-lg p-5 space-y-3"
+                >
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+                    <Globe className="w-4 h-4 text-[#0F3CC9]" />
+                    <h3 className="text-sm font-bold text-slate-900">
+                      Remote Client Institute Branding &amp; Bank Settings
+                    </h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Institute Name
+                      </label>
+                      <input
+                        type="text"
+                        value={portalSettingsDraft.instituteName}
+                        onChange={(e) =>
+                          setPortalSettingsDraft((s) => ({ ...s, instituteName: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-300 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Tagline</label>
+                      <input
+                        type="text"
+                        value={portalSettingsDraft.tagline}
+                        onChange={(e) =>
+                          setPortalSettingsDraft((s) => ({ ...s, tagline: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-300 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Client Contact Email
+                      </label>
+                      <input
+                        type="email"
+                        value={portalSettingsDraft.email}
+                        onChange={(e) =>
+                          setPortalSettingsDraft((s) => ({ ...s, email: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-300 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Client Contact Phone
+                      </label>
+                      <input
+                        type="text"
+                        value={portalSettingsDraft.phone}
+                        onChange={(e) =>
+                          setPortalSettingsDraft((s) => ({ ...s, phone: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Client UPI ID
+                      </label>
+                      <input
+                        type="text"
+                        value={portalSettingsDraft.upiId}
+                        onChange={(e) =>
+                          setPortalSettingsDraft((s) => ({ ...s, upiId: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Address</label>
+                      <input
+                        type="text"
+                        value={portalSettingsDraft.address}
+                        onChange={(e) =>
+                          setPortalSettingsDraft((s) => ({ ...s, address: e.target.value }))
+                        }
+                        className="w-full px-3 py-2 border border-slate-300 rounded"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className="px-4 py-2 font-semibold text-white bg-[#0B192C] hover:bg-slate-900 rounded"
+                    >
+                      Update Client Portal Settings
+                    </button>
+                  </div>
+                </form>
+
+                {/* Reset Client Admin Passcode */}
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setBusy(true);
+                    setErrorBanner('');
+                    try {
+                      const res = await api.ownerResetClientAdminPasscode(
+                        resetAdminPasscode,
+                        resetAdminEmail
+                      );
+                      setResetAdminPasscode('');
+                      await onRefresh();
+                      notify(`Client Admin passcode reset for ${res.email}.`);
+                    } catch (err) {
+                      setErrorBanner(
+                        err instanceof Error ? err.message : 'Unable to reset admin passcode.'
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="bg-white border border-slate-200 rounded-lg p-5 space-y-3"
+                >
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Reset Client Institute Admin Login
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Client Admin Email
+                      </label>
+                      <input
+                        type="email"
+                        value={resetAdminEmail}
+                        onChange={(e) => setResetAdminEmail(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        New Passcode (min 6 chars)
+                      </label>
+                      <input
+                        type="text"
+                        value={resetAdminPasscode}
+                        onChange={(e) => setResetAdminPasscode(e.target.value)}
+                        placeholder="Set new client passcode"
+                        className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                        required
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={busy}
+                      className="px-4 py-2 font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded"
+                    >
+                      Reset Admin Passcode
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            {/* Client Exams Live / Draft Remote Control */}
+            <section className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Client Portal Exams ({workspace.portalExams.length})
+                </h3>
+                <span className="font-mono text-[11px] text-slate-500">
+                  Toggle exam Live/Draft state directly from Owner Console
+                </span>
+              </div>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                    <th className="py-2.5 px-4">Code</th>
+                    <th className="py-2.5 px-4">Title</th>
+                    <th className="py-2.5 px-4">Subject / Class</th>
+                    <th className="py-2.5 px-4">Status</th>
+                    <th className="py-2.5 px-4 text-right">Owner Control</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {workspace.portalExams.map((ex) => (
+                    <tr key={ex.id}>
+                      <td className="py-2.5 px-4 font-mono font-semibold text-slate-700">
+                        {ex.code}
+                      </td>
+                      <td className="py-2.5 px-4 font-semibold text-slate-900">{ex.title}</td>
+                      <td className="py-2.5 px-4 text-slate-600">
+                        {ex.subject || 'PCM'} · Class {ex.targetClass} · {ex.questionIds.length} Qs
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span
+                          className={`inline-block px-2 py-0.5 text-[11px] font-semibold border rounded ${
+                            ex.status === 'Live'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          {ex.status}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4 text-right">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              await api.ownerToggleClientExam(ex.id);
+                              await onRefresh();
+                              notify(
+                                `${ex.title} switched to ${ex.status === 'Live' ? 'Draft' : 'Live'}.`
+                              );
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-slate-300 hover:bg-slate-50 rounded"
+                        >
+                          {ex.status === 'Live' ? 'Set Draft' : 'Publish Live'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          </div>
+        )}
+
+        {/* Owner Profile, Support Contact & Security */}
+        {activeTab === 'profile' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs">
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
-                setPassStatus('');
                 setBusy(true);
+                setErrorBanner('');
                 try {
-                  await api.changeOwnerPassword(currentPassword, newPassword, newUsername);
-                  setCurrentPassword('');
-                  setNewPassword('');
+                  await api.updateOwnerProfile(profileDraft);
                   await onRefresh();
-                  setPassStatus('Owner credentials updated successfully.');
+                  notify('SALAR Tech owner profile, contact number, email & branding saved.');
                 } catch (err) {
-                  setPassStatus(
-                    err instanceof Error ? err.message : 'Unable to update owner credentials.'
+                  setErrorBanner(
+                    err instanceof Error ? err.message : 'Unable to save owner profile.'
                   );
                 } finally {
                   setBusy(false);
                 }
               }}
-              className="space-y-3"
+              className="lg:col-span-7 bg-white border border-slate-200 rounded-lg p-6 space-y-4"
             >
+              <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3">
+                <Building2 className="w-4 h-4 text-[#0F3CC9]" />
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">
+                    Owner Contact, Mail ID &amp; Client Portal Attribution
+                  </h2>
+                  <p className="text-[11px] text-slate-500">
+                    Displayed across Client Portals, Suspended screens, and invoices.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Owner Name</label>
+                  <input
+                    type="text"
+                    value={profileDraft.ownerName}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({ ...p, ownerName: e.target.value }))
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Company Name</label>
+                  <input
+                    type="text"
+                    value={profileDraft.companyName}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({ ...p, companyName: e.target.value }))
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    <span className="inline-flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-[#0F3CC9]" /> Contact Number *
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={profileDraft.contactPhone}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({ ...p, contactPhone: e.target.value }))
+                    }
+                    placeholder="+91 98230 11223"
+                    className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    WhatsApp Support Number
+                  </label>
+                  <input
+                    type="text"
+                    value={profileDraft.whatsappNumber}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({ ...p, whatsappNumber: e.target.value }))
+                    }
+                    placeholder="+919823011223"
+                    className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    <span className="inline-flex items-center gap-1">
+                      <Mail className="w-3 h-3 text-[#0F3CC9]" /> Owner Mail ID *
+                    </span>
+                  </label>
+                  <input
+                    type="email"
+                    value={profileDraft.email}
+                    onChange={(e) => setProfileDraft((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="support@salartech.in"
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    GSTIN / Business Reg No
+                  </label>
+                  <input
+                    type="text"
+                    value={profileDraft.gstNumber}
+                    onChange={(e) =>
+                      setProfileDraft((p) => ({ ...p, gstNumber: e.target.value }))
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded font-mono"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Owner Username</label>
+                <label className="block font-semibold text-slate-700 mb-1">Office Address</label>
                 <input
                   type="text"
-                  value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value)}
+                  value={profileDraft.address}
+                  onChange={(e) => setProfileDraft((p) => ({ ...p, address: e.target.value }))}
                   className="w-full px-3 py-2 border border-slate-300 rounded"
-                  required
                 />
               </div>
+
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
-                  Current Password *
+                  Client Portal Credit Text (shown on Client Portals)
                 </label>
                 <input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded"
-                  required
+                  type="text"
+                  value={profileDraft.footerTagline}
+                  onChange={(e) =>
+                    setProfileDraft((p) => ({ ...p, footerTagline: e.target.value }))
+                  }
+                  placeholder="Made by SALAR Tech"
+                  className="w-full px-3 py-2 border border-slate-300 rounded font-semibold"
                 />
               </div>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  New Password (min 6 characters) *
-                </label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded"
-                  required
-                />
+
+              <div className="flex justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="px-4 py-2 font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded"
+                >
+                  Save Owner Profile &amp; Contact Details
+                </button>
               </div>
-              {passStatus && <p className="text-xs font-medium text-[#0F3CC9]">{passStatus}</p>}
-              <button
-                type="submit"
-                disabled={busy}
-                className="px-4 py-2 font-semibold text-white bg-[#0B192C] hover:bg-slate-900 rounded"
-              >
-                Update Owner Account
-              </button>
             </form>
+
+            {/* Owner Login Security */}
+            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-6 space-y-4">
+              <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3">
+                <KeyRound className="w-4 h-4 text-[#0F3CC9]" />
+                <h2 className="text-sm font-bold text-slate-900">
+                  SALAR Tech Owner Credentials
+                </h2>
+              </div>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setPassStatus('');
+                  setBusy(true);
+                  try {
+                    await api.changeOwnerPassword(currentPassword, newPassword, newUsername);
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    await onRefresh();
+                    setPassStatus('Owner credentials updated successfully.');
+                  } catch (err) {
+                    setPassStatus(
+                      err instanceof Error ? err.message : 'Unable to update owner credentials.'
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                className="space-y-3"
+              >
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Owner Username</label>
+                  <input
+                    type="text"
+                    value={newUsername}
+                    onChange={(e) => setNewUsername(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Current Password *
+                  </label>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    New Password (min 6 characters) *
+                  </label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded"
+                    required
+                  />
+                </div>
+                {passStatus && <p className="text-xs font-medium text-[#0F3CC9]">{passStatus}</p>}
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="px-4 py-2 font-semibold text-white bg-[#0B192C] hover:bg-slate-900 rounded"
+                >
+                  Update Owner Account
+                </button>
+              </form>
+            </div>
           </div>
         )}
       </main>

@@ -27,6 +27,7 @@ import type {
   ExamPaper,
   InstituteSettings,
   PaymentRecord,
+  PublicLicenseSummary,
   StudentRecord,
   StudyMaterial,
   TestFolder,
@@ -48,6 +49,7 @@ interface StudentPortalViewProps {
   courses: CoursePackage[];
   testSeries: TestSeriesPackage[];
   payments: PaymentRecord[];
+  license?: PublicLicenseSummary;
   isAdminSession?: boolean;
   onStartExam: (exam: ExamPaper) => void;
   onViewResult: (attempt: ExamAttempt) => void;
@@ -70,6 +72,7 @@ export function StudentPortalView({
   courses,
   testSeries,
   payments,
+  license,
   isAdminSession = false,
   onStartExam,
   onViewResult,
@@ -250,6 +253,17 @@ export function StudentPortalView({
               </div>
             </div>
           )}
+
+          <div className="pt-2 border-t border-slate-100 px-1 space-y-0.5">
+            <p className="text-[10px] font-mono font-semibold text-slate-600">
+              {license?.madeByText || 'Made by SALAR Tech'}
+            </p>
+            {(license?.ownerContactPhone || license?.ownerEmail) && (
+              <p className="text-[10px] font-mono text-slate-400 truncate">
+                {license?.ownerContactPhone || ''} {license?.ownerEmail ? `· ${license.ownerEmail}` : ''}
+              </p>
+            )}
+          </div>
         </div>
       </aside>
 

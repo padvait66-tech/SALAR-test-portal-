@@ -96,13 +96,15 @@ export function LandingView({
             >
               Login
             </button>
-            <button
-              type="button"
-              onClick={() => onOpenAuthModal('student', 'signup')}
-              className="hidden sm:inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold text-white bg-[#0F3CC9] rounded hover:bg-blue-800 whitespace-nowrap"
-            >
-              Signup
-            </button>
+            {license?.portalControls?.allowStudentSignup !== false && (
+              <button
+                type="button"
+                onClick={() => onOpenAuthModal('student', 'signup')}
+                className="hidden sm:inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold text-white bg-[#0F3CC9] rounded hover:bg-blue-800 whitespace-nowrap"
+              >
+                Signup
+              </button>
+            )}
             <button
               type="button"
               onClick={onOpenLogin}
@@ -167,9 +169,14 @@ export function LandingView({
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 lg:py-14">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
               <div className="lg:col-span-6 flex flex-col justify-center space-y-5">
-                <p className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#0F3CC9]">
-                  {settings.tagline}
-                </p>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <p className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#0F3CC9]">
+                    {settings.tagline}
+                  </p>
+                  <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
+                    {license?.madeByText || 'Made by SALAR Tech'}
+                  </span>
+                </div>
                 <h1 className="text-3xl sm:text-4xl font-bold leading-tight tracking-tight text-slate-900">
                   {settings.heroTitle}
                 </h1>
@@ -185,7 +192,7 @@ export function LandingView({
                     <span>{settings.primaryCta}</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
-                  {liveExams[0] && (
+                  {liveExams[0] && license?.portalControls?.allowQuickJoin !== false && (
                     <button
                       type="button"
                       onClick={() => onOpenQuickJoin(liveExams[0])}
@@ -283,17 +290,19 @@ export function LandingView({
                   </div>
 
                   <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => onOpenQuickJoin(exam)}
-                      className="flex-1 py-1.5 px-2.5 text-xs font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded"
-                    >
-                      Quick Join
-                    </button>
+                    {license?.portalControls?.allowQuickJoin !== false && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenQuickJoin(exam)}
+                        className="flex-1 py-1.5 px-2.5 text-xs font-semibold text-white bg-[#0F3CC9] hover:bg-blue-800 rounded"
+                      >
+                        Quick Join
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => onOpenSharedExam(exam.id)}
-                      className="py-1.5 px-2.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded"
+                      className="flex-1 py-1.5 px-2.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded"
                     >
                       Details
                     </button>
@@ -361,19 +370,23 @@ export function LandingView({
                     <span className="text-base font-bold text-slate-900 font-mono tabular-nums">
                       ₹{new Intl.NumberFormat('en-IN').format(course.price)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onStartCheckout({
-                          name: course.title,
-                          type: 'Course',
-                          amount: course.price,
-                        })
-                      }
-                      className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#0F3CC9] rounded hover:bg-blue-800"
-                    >
-                      Enroll via UPI
-                    </button>
+                    {license?.portalControls?.allowPayments !== false ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onStartCheckout({
+                            name: course.title,
+                            type: 'Course',
+                            amount: course.price,
+                          })
+                        }
+                        className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#0F3CC9] rounded hover:bg-blue-800"
+                      >
+                        Enroll via UPI
+                      </button>
+                    ) : (
+                      <span className="text-[11px] font-mono text-slate-500">Contact Desk</span>
+                    )}
                   </div>
                 </article>
               ))}
@@ -417,19 +430,23 @@ export function LandingView({
                     <span className="text-lg font-bold text-slate-900 font-mono tabular-nums">
                       ₹{new Intl.NumberFormat('en-IN').format(series.price)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onStartCheckout({
-                          name: series.title,
-                          type: 'Test Series',
-                          amount: series.price,
-                        })
-                      }
-                      className="px-4 py-2 text-xs font-semibold text-white bg-[#0F3CC9] rounded hover:bg-blue-800"
-                    >
-                      Buy Test Series
-                    </button>
+                    {license?.portalControls?.allowPayments !== false ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onStartCheckout({
+                            name: series.title,
+                            type: 'Test Series',
+                            amount: series.price,
+                          })
+                        }
+                        className="px-4 py-2 text-xs font-semibold text-white bg-[#0F3CC9] rounded hover:bg-blue-800"
+                      >
+                        Buy Test Series
+                      </button>
+                    ) : (
+                      <span className="text-[11px] font-mono text-slate-500">Contact Desk</span>
+                    )}
                   </div>
                 </article>
               ))}
@@ -500,19 +517,30 @@ export function LandingView({
             <span onClick={handleFooterBrandClick} className="font-bold text-slate-900 select-none">
               {settings.instituteName}
             </span>
+            <span className="font-semibold text-slate-700">
+              · {license?.madeByText || 'Made by SALAR Tech'}
+            </span>
             {license && (
               <span className="text-[11px] font-mono text-slate-500">
-                · Licensed by {license.licensor} ({license.planName} · ₹
+                ({license.planName} · ₹
                 {new Intl.NumberFormat('en-IN').format(license.price)}/{license.billingCycle})
               </span>
             )}
           </div>
-          <div className="flex items-center gap-5">
+          <div className="flex flex-wrap items-center gap-4">
             <button type="button" onClick={onOpenLogin} className="hover:text-slate-900">
               Student &amp; Admin Portal
             </button>
-            <a href={`mailto:${settings.email}`} className="hover:text-slate-900">
-              {settings.email}
+            {license?.ownerContactPhone && (
+              <span className="font-mono text-[11px] text-slate-500">
+                Tech Support: {license.ownerContactPhone}
+              </span>
+            )}
+            <a
+              href={`mailto:${license?.ownerEmail || settings.email}`}
+              className="hover:text-slate-900"
+            >
+              {license?.ownerEmail || settings.email}
             </a>
           </div>
         </div>

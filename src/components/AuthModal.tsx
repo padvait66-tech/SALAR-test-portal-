@@ -1,6 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { GraduationCap, ShieldCheck, X } from 'lucide-react';
-import type { BatchRecord, InstituteSettings, StudentRecord } from '../types/portal';
+import type {
+  BatchRecord,
+  InstituteSettings,
+  PublicLicenseSummary,
+  StudentRecord,
+} from '../types/portal';
 import { api, setAuthToken } from '../api/client';
 
 interface AuthModalProps {
@@ -9,6 +14,7 @@ interface AuthModalProps {
   initialStudentMode?: 'signin' | 'signup';
   settings: InstituteSettings;
   batches: BatchRecord[];
+  license?: PublicLicenseSummary;
   onClose: () => void;
   onAuthenticatedStudent: (student: StudentRecord) => void;
   onAuthenticatedAdmin: () => void;
@@ -20,6 +26,7 @@ export function AuthModal({
   initialStudentMode = 'signin',
   settings,
   batches,
+  license,
   onClose,
   onAuthenticatedStudent,
   onAuthenticatedAdmin,
@@ -263,6 +270,14 @@ export function AuthModal({
                     {submitting ? 'Signing in...' : 'Login to Student Portal'}
                   </button>
                 </form>
+              ) : license?.portalControls?.allowStudentSignup === false ? (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded text-xs text-amber-900 space-y-1">
+                  <p className="font-bold">Student Signup Disabled</p>
+                  <p>
+                    Self-registration is currently paused by the portal administrator. Use your
+                    assigned Roll Number to log in or contact {license.ownerContactPhone || settings.phone}.
+                  </p>
+                </div>
               ) : (
                 <form onSubmit={handleStudentSignup} className="space-y-3">
                   <div>
@@ -408,6 +423,11 @@ export function AuthModal({
               </button>
             </form>
           )}
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-mono text-slate-400">
+            <span>{license?.madeByText || 'Made by SALAR Tech'}</span>
+            {license?.ownerContactPhone && <span>{license.ownerContactPhone}</span>}
+          </div>
         </div>
       </div>
     </div>

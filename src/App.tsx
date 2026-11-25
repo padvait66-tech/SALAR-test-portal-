@@ -440,7 +440,9 @@ export default function App() {
   }
 
   const isLicenseBlocked =
-    (currentLicense?.status === 'Suspended' || currentLicense?.status === 'Expired') &&
+    (currentLicense?.status === 'Suspended' ||
+      currentLicense?.status === 'Expired' ||
+      Boolean(currentLicense?.portalControls?.maintenanceMode)) &&
     view !== 'owner-login' &&
     view !== 'owner';
 
@@ -556,6 +558,21 @@ export default function App() {
             void refreshPublic();
             setView('landing');
           }}
+          onOpenAdminConsole={async () => {
+            window.history.replaceState(null, '', '/');
+            setSessionRole('admin');
+            setReturnRole('admin');
+            await refreshAdminWorkspace();
+            setView('admin');
+          }}
+          onOpenStudentPortal={async () => {
+            window.history.replaceState(null, '', '/');
+            setSessionRole('student');
+            setReturnRole('student');
+            const ws = await refreshStudentWorkspace();
+            setRunnerStudent(ws.student);
+            setView('student');
+          }}
           onLogout={handleLogout}
         />
       )}
@@ -572,6 +589,7 @@ export default function App() {
           courses={studentWorkspace.courses}
           testSeries={studentWorkspace.testSeries}
           payments={studentWorkspace.payments}
+          license={studentWorkspace.license ?? currentLicense}
           isAdminSession={sessionRole === 'admin'}
           onStartExam={(exam) => void handleStartExamFromStudent(exam)}
           onViewResult={(attempt) => void handleViewAttemptSolutions(attempt, 'student')}
@@ -829,6 +847,7 @@ export default function App() {
         initialStudentMode={authModalState.studentMode}
         settings={currentSettings}
         batches={publicData.batches}
+        license={currentLicense}
         onClose={() => setAuthModalState((prev) => ({ ...prev, open: false }))}
         onAuthenticatedStudent={(student) => void handleAuthenticatedStudent(student)}
         onAuthenticatedAdmin={() => void handleAuthenticatedAdmin()}
